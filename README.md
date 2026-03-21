@@ -183,6 +183,24 @@ Available manual workflows:
 - `CI`: runs tests, race tests, vet, lint, and platform builds
 - `Release`: builds `crs`, `crs-windows-amd64.exe`, and `SHA256SUMS`, then publishes a GitHub release
 
+## Releases
+
+Future releases should be cut with the `Release` GitHub Actions workflow, not with an ad hoc local `gh release create` command.
+
+From the GitHub UI:
+
+1. Open `Actions` in the repository.
+2. Select the `Release` workflow.
+3. Run it with a version like `v0.1.1`.
+
+Or trigger it with `gh`:
+
+```bash
+gh workflow run release.yml --repo aurokin/clip-remote-sync -f version=v0.1.1
+```
+
+The workflow validates the version, builds both binaries, writes `SHA256SUMS`, and publishes the release assets together.
+
 ## Install
 
 Install from source with Go:
@@ -222,4 +240,11 @@ This project is Go-based, so it works cleanly with an existing `mise` Go toolcha
 mise x -- go build -o bin/crs ./cmd/crs
 ```
 
-For public distribution, the clean path is GitHub releases with prebuilt binaries. `mise` can then install from a release backend such as `ubi`.
+For release installs, `mise` can delegate to `ubi`:
+
+```bash
+mise use -g ubi:houseabsolute/ubi
+ubi --project aurokin/clip-remote-sync --tag v0.1.0 --exe crs --in ~/.local/bin
+```
+
+If you do not want `ubi`, the release download examples above are the direct fallback.
