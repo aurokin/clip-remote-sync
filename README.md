@@ -218,6 +218,22 @@ Install from source with Go:
 go install github.com/aurokin/clip-remote-sync/cmd/crs@latest
 ```
 
+Recommended for Unix hosts that already use `mise` and Go, such as `bront` and `luma`:
+
+```toml
+[tools]
+go = "latest"
+"go:github.com/aurokin/clip-remote-sync/cmd/crs" = "latest"
+```
+
+Then run:
+
+```bash
+mise install
+```
+
+That keeps `crs` installed from source through the Go backend, which works on both Linux and macOS without needing platform-specific release assets.
+
 Install a released Linux binary:
 
 ```bash
@@ -249,16 +265,20 @@ This project is Go-based, so it works cleanly with an existing `mise` Go toolcha
 mise x -- go build -o bin/crs ./cmd/crs
 ```
 
-For release installs, `mise` can delegate to `ubi`:
+For managed installs on Unix hosts, prefer the Go backend entry shown above over release-binary installers.
 
-```bash
-mise use -g ubi:houseabsolute/ubi
-ubi --project aurokin/clip-remote-sync --exe crs --in ~/.local/bin
-```
+## Windows Host Setup
 
-That installs the latest release by default. If you want a pinned version instead, add `--tag v0.1.0`.
+For a Windows source host such as `haste`:
 
-If you do not want `ubi`, the release download examples above are the direct fallback.
+1. Download `crs-windows-amd64.exe` and `SHA256SUMS` from the latest release.
+2. Verify the SHA-256 hash against the `crs-windows-amd64.exe` line in `SHA256SUMS`.
+3. Install the binary at `C:\Program Files\clip-remote-sync\crs.exe`.
+4. Create `C:\ProgramData\clip-remote-sync\requests` and `C:\ProgramData\clip-remote-sync\results`.
+5. Create a scheduled task named `crs_capture` that runs `crs.exe _capture-task-runner C:\ProgramData\clip-remote-sync`.
+6. Create a scheduled task named `crs_set_clipboard_text` that runs `crs.exe _set-clipboard-text-task-runner C:\ProgramData\clip-remote-sync`.
+7. Run both tasks as the same desktop user who owns the interactive clipboard session, and set them to run only when that user is logged on.
+8. Configure the destination host with `launch_mode: "task"`, `remote_bin: "C:\\Program Files\\clip-remote-sync\\crs.exe"`, `task_bridge_dir: "C:\\ProgramData\\clip-remote-sync"`, `capture_task_name: "crs_capture"`, and `set_text_task_name: "crs_set_clipboard_text"`.
 
 ## Upgrading on Windows
 
