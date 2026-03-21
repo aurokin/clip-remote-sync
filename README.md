@@ -244,7 +244,20 @@ For release installs, `mise` can delegate to `ubi`:
 
 ```bash
 mise use -g ubi:houseabsolute/ubi
-ubi --project aurokin/clip-remote-sync --tag v0.1.0 --exe crs --in ~/.local/bin
+ubi --project aurokin/clip-remote-sync --exe crs --in ~/.local/bin
 ```
 
+That installs the latest release by default. If you want a pinned version instead, add `--tag v0.1.0`.
+
 If you do not want `ubi`, the release download examples above are the direct fallback.
+
+## Upgrading on Windows
+
+If `crs.exe` is already installed at `C:\Program Files\clip-remote-sync\crs.exe`, you can upgrade in place without recreating the scheduled tasks.
+
+1. Download the new `crs-windows-amd64.exe` and `SHA256SUMS` release assets.
+2. Verify the SHA-256 hash against the `crs-windows-amd64.exe` line in `SHA256SUMS`.
+3. Replace `C:\Program Files\clip-remote-sync\crs.exe` with the new binary.
+4. Keep the existing `crs_capture` and `crs_set_clipboard_text` tasks pointed at that same path.
+
+As long as the installed path does not change, the task setup does not need to be recreated for each upgrade.
