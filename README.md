@@ -176,13 +176,43 @@ That runs:
 
 ## CI
 
-GitHub Actions are currently manual-only via `workflow_dispatch` while the workflow is still being developed.
+GitHub Actions are currently manual-only via `workflow_dispatch` while the workflows are still being developed.
+
+Available manual workflows:
+
+- `CI`: runs tests, race tests, vet, lint, and platform builds
+- `Release`: builds `crs`, `crs-windows-amd64.exe`, and `SHA256SUMS`, then publishes a GitHub release
 
 ## Install
+
+Install from source with Go:
 
 ```bash
 go install github.com/aurokin/clip-remote-sync/cmd/crs@latest
 ```
+
+Install a released Linux binary:
+
+```bash
+version=v0.1.0
+base=https://github.com/aurokin/clip-remote-sync/releases/download/$version
+curl -fsSLO "$base/crs"
+curl -fsSLO "$base/SHA256SUMS"
+sha256sum -c --ignore-missing SHA256SUMS
+install -m 0755 crs ~/.local/bin/crs
+```
+
+Install a released Windows binary:
+
+```powershell
+$version = 'v0.1.0'
+$base = "https://github.com/aurokin/clip-remote-sync/releases/download/$version"
+Invoke-WebRequest "$base/crs-windows-amd64.exe" -OutFile .\crs-windows-amd64.exe
+Invoke-WebRequest "$base/SHA256SUMS" -OutFile .\SHA256SUMS
+Get-FileHash .\crs-windows-amd64.exe -Algorithm SHA256
+```
+
+Compare the Windows SHA-256 output with the matching `crs-windows-amd64.exe` line in `SHA256SUMS`.
 
 ## Mise
 

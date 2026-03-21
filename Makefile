@@ -1,13 +1,16 @@
 GO ?= go
 GOLANGCI_LINT ?= $(if $(shell $(GO) env GOBIN),$(shell $(GO) env GOBIN),$(shell $(GO) env GOPATH)/bin)/golangci-lint
 
-.PHONY: build build-windows fmt lint lint-fix test race vet check install tools
+.PHONY: build build-windows checksums fmt lint lint-fix test race vet check install tools
 
 build:
 	$(GO) build -o bin/crs ./cmd/crs
 
 build-windows:
 	GOOS=windows GOARCH=amd64 $(GO) build -o bin/crs-windows-amd64.exe ./cmd/crs
+
+checksums: build build-windows
+	cd bin && sha256sum crs crs-windows-amd64.exe > SHA256SUMS
 
 fmt:
 	$(GO) fmt ./...
