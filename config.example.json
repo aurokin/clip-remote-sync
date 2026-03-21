@@ -1,0 +1,20 @@
+{
+  "destination": {
+    "name": "primary"
+  },
+  "sources": {
+    "mac_source": {
+      "ssh_target": "user@mac-source.example",
+      "launch_mode": "direct",
+      "remote_bin": "crs"
+    },
+    "windows_source": {
+      "ssh_target": "user@windows-source.example",
+      "launch_mode": "task",
+      "remote_bin": "C:\\Program Files\\clip-remote-sync\\crs.exe",
+      "task_bridge_dir": "C:\\ProgramData\\clip-remote-sync",
+      "capture_task_name": "crs_capture",
+      "set_text_task_name": "crs_set_clipboard_text"
+    }
+  }
+}

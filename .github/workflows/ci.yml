@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Run tests
+        run: go test ./...
+      - name: Run race tests
+        run: go test -race ./...
+      - name: Run vet
+        run: go vet ./...
+      - name: Build Linux binary
+        run: go build ./cmd/crs
+      - name: Build Windows binary
+        run: GOOS=windows GOARCH=amd64 go build -o /tmp/crs-windows-amd64.exe ./cmd/crs
+
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Run tests
+        run: go test ./...
+      - name: Run race tests
+        run: go test -race ./...
+      - name: Run vet
+        run: go vet ./...
+      - name: Build macOS binary
+        run: go build ./cmd/crs
+      - name: Build Windows binary
+        run: GOOS=windows GOARCH=amd64 go build -o /tmp/crs-windows-amd64.exe ./cmd/crs
+
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Run tests
+        run: go test ./...
+      - name: Run vet
+        run: go vet ./...
+      - name: Build Windows binary
+        run: go build -o $env:TEMP\crs-windows-amd64.exe ./cmd/crs
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v1.64.8

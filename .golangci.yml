@@ -1,0 +1,27 @@
+run:
+  timeout: 5m
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gocritic
+    - gocyclo
+    - gofmt
+    - goimports
+    - govet
+    - ineffassign
+    - revive
+    - staticcheck
+    - unused
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+  revive:
+    rules:
+      - name: var-naming
+      - name: exported
+        disabled: true
+      - name: package-comments
+        disabled: true
