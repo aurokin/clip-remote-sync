@@ -45,6 +45,15 @@ Some clients may treat a pasted local image path as an image attachment instead 
 
 In particular, if the source clipboard contains `/tmp/clip/...png` as text, Codex may still resolve that path into an image attachment when pasted.
 
+## Design Notes
+
+These choices are deliberate and should not be changed casually:
+
+- `crs` is intentionally asymmetric. It is designed around a primary destination machine pulling from configured source machines, not around bidirectional or peer-to-peer clipboard sync.
+- The public human interface is `crs <source>`. Internal subcommands such as `_capture` and `_set-clipboard-text` are implementation details for transport and task runners.
+- Image sync intentionally writes a simple destination-local path like `/tmp/clip/...png` back to the source clipboard. That is less technically precise than a host-qualified locator, but it is the intended workflow for remote operation and agent tooling.
+- Windows `launch_mode: "task"` exists because direct SSH-launched clipboard access was not reliable in the interactive desktop session. Do not replace task mode with direct mode on Windows without re-proving that constraint on real machines.
+
 ## Launch Modes
 
 There are two source launch modes:
