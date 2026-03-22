@@ -537,6 +537,6 @@ func writeCommandCase(script *strings.Builder, index int, step fakeCommandStep) 
 		script.WriteString(step.stderr)
 		script.WriteString("\n__CRS_STDERR__\n")
 	}
-	script.WriteString(fmt.Sprintf("exit %d\n", step.exitCode))
+	fmt.Fprintf(script, "exit %d\n", step.exitCode)
 	script.WriteString(";;\n")
 }
