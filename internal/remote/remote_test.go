@@ -482,7 +482,7 @@ func scriptedCommand(t *testing.T, steps []fakeCommandStep) (commandFunc, string
 
 	return func(name string, args ...string) *exec.Cmd {
 		cmdArgs := append([]string{scriptPath, name}, args...)
-		return exec.Command("/bin/sh", cmdArgs...)
+		return exec.Command("sh", cmdArgs...)
 	}, logPath
 }
 
@@ -516,7 +516,7 @@ func stdinCommand(t *testing.T, steps []fakeCommandStep) (commandFunc, string) {
 
 	return func(name string, args ...string) *exec.Cmd {
 		cmdArgs := append([]string{scriptPath, name}, args...)
-		return exec.Command("/bin/sh", cmdArgs...)
+		return exec.Command("sh", cmdArgs...)
 	}, stdinPath
 }
 

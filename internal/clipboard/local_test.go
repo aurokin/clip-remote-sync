@@ -27,7 +27,7 @@ cat > %q
 
 	command := func(name string, args ...string) *exec.Cmd {
 		cmdArgs := append([]string{scriptPath, name}, args...)
-		return exec.Command("/bin/sh", cmdArgs...)
+		return exec.Command("sh", cmdArgs...)
 	}
 
 	if err := runPowerShellWithInput(command, "$text = [Console]::In.ReadToEnd(); Set-Clipboard -Value $text", "/tmp/clip/test.png"); err != nil {
@@ -69,7 +69,7 @@ cat "$5" > %q
 
 	command := func(name string, args ...string) *exec.Cmd {
 		cmdArgs := append([]string{scriptPath, name}, args...)
-		return exec.Command("/bin/sh", cmdArgs...)
+		return exec.Command("sh", cmdArgs...)
 	}
 
 	if err := runDetachedXclip(command, "/tmp/clip/test.png", "clipboard"); err != nil {
@@ -118,7 +118,7 @@ printf '%%s\n' "$*" > %q
 
 	command := func(name string, args ...string) *exec.Cmd {
 		cmdArgs := append([]string{scriptPath, name}, args...)
-		return exec.Command("/bin/sh", cmdArgs...)
+		return exec.Command("sh", cmdArgs...)
 	}
 
 	if err := runDetachedXclipBytes(command, []byte("png"), "clipboard", "image/png"); err != nil {
