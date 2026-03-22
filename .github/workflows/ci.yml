@@ -11,6 +11,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Verify release tree
+        run: make verify-release-tree
       - name: Run tests
         run: go test ./...
       - name: Run race tests
@@ -29,6 +31,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Verify release tree
+        run: make verify-release-tree
       - name: Run tests
         run: go test ./...
       - name: Run race tests
@@ -47,6 +51,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Verify release tree
+        shell: bash
+        run: make verify-release-tree
       - name: Run tests
         run: go test ./...
       - name: Run vet
@@ -61,6 +68,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Verify release tree
+        run: make verify-release-tree
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v1.64.8

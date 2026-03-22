@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release tag to publish, for example v0.1.1
+        description: Release tag to publish, for example v1.0.0
         required: true
         type: string
 
@@ -23,7 +23,7 @@ jobs:
           case "$VERSION" in
             v[0-9]*.[0-9]*.[0-9]*) ;;
             *)
-              echo "version must look like v0.1.1" >&2
+              echo "version must look like v1.0.0" >&2
               exit 1
               ;;
           esac
@@ -31,6 +31,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Verify release tree
+        run: make verify-release-tree
       - name: Build release artifacts
         run: make checksums
       - name: Check for existing release

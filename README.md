@@ -112,6 +112,15 @@ Linux destination requirements:
 
 Current local image clipboard support is implemented for Linux destinations.
 
+## Support Matrix
+
+- Linux destination: supported for text and image clipboard writes
+- macOS source via `launch_mode: "direct"`: supported
+- Linux source via `launch_mode: "direct"`: supported
+- Windows source via `launch_mode: "task"`: supported
+- Windows source via `launch_mode: "direct"`: not a supported default because clipboard access was not reliable in SSH-launched sessions
+- Bidirectional sync or peer-to-peer sync: out of scope by design
+
 ## Config
 
 Host information stays out of git. Copy `config.example.json` to your local config path:
@@ -176,6 +185,7 @@ make check
 
 That runs:
 
+- `make verify-release-tree`
 - `go fmt`
 - `go vet`
 - `go test`
@@ -234,22 +244,20 @@ mise install
 
 That keeps `crs` installed from source through the Go backend, which works on both Linux and macOS without needing platform-specific release assets.
 
-Install a released Linux binary:
+Install the latest released Linux binary:
 
 ```bash
-version=v0.1.0
-base=https://github.com/aurokin/clip-remote-sync/releases/download/$version
+base=https://github.com/aurokin/clip-remote-sync/releases/latest/download
 curl -fsSLO "$base/crs"
 curl -fsSLO "$base/SHA256SUMS"
 sha256sum -c --ignore-missing SHA256SUMS
 install -m 0755 crs ~/.local/bin/crs
 ```
 
-Install a released Windows binary:
+Install the latest released Windows binary:
 
 ```powershell
-$version = 'v0.1.0'
-$base = "https://github.com/aurokin/clip-remote-sync/releases/download/$version"
+$base = 'https://github.com/aurokin/clip-remote-sync/releases/latest/download'
 Invoke-WebRequest "$base/crs-windows-amd64.exe" -OutFile .\crs-windows-amd64.exe
 Invoke-WebRequest "$base/SHA256SUMS" -OutFile .\SHA256SUMS
 Get-FileHash .\crs-windows-amd64.exe -Algorithm SHA256
@@ -271,22 +279,28 @@ For managed installs on Unix hosts, prefer the Go backend entry shown above over
 
 For a Windows source host such as `haste`:
 
-1. Download `crs-windows-amd64.exe` and `SHA256SUMS` from the latest release.
-2. Verify the SHA-256 hash against the `crs-windows-amd64.exe` line in `SHA256SUMS`.
-3. Install the binary at `C:\Program Files\clip-remote-sync\crs.exe`.
-4. Create `C:\ProgramData\clip-remote-sync\requests` and `C:\ProgramData\clip-remote-sync\results`.
-5. Create a scheduled task named `crs_capture` that runs `crs.exe _capture-task-runner C:\ProgramData\clip-remote-sync`.
-6. Create a scheduled task named `crs_set_clipboard_text` that runs `crs.exe _set-clipboard-text-task-runner C:\ProgramData\clip-remote-sync`.
-7. Run both tasks as the same desktop user who owns the interactive clipboard session, and set them to run only when that user is logged on.
-8. Configure the destination host with `launch_mode: "task"`, `remote_bin: "C:\\Program Files\\clip-remote-sync\\crs.exe"`, `task_bridge_dir: "C:\\ProgramData\\clip-remote-sync"`, `capture_task_name: "crs_capture"`, and `set_text_task_name: "crs_set_clipboard_text"`.
+1. Download this repository or at least [`scripts/install-windows.ps1`](./scripts/install-windows.ps1).
+2. Run the installer script as the target desktop user:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
+```
+
+That installs the latest verified release to `C:\Program Files\clip-remote-sync\crs.exe` and creates the bridge directories under `C:\ProgramData\clip-remote-sync`.
+
+3. Create a scheduled task named `crs_capture` that runs `crs.exe _capture-task-runner C:\ProgramData\clip-remote-sync`.
+4. Create a scheduled task named `crs_set_clipboard_text` that runs `crs.exe _set-clipboard-text-task-runner C:\ProgramData\clip-remote-sync`.
+5. Run both tasks as the same desktop user who owns the interactive clipboard session, and set them to run only when that user is logged on.
+6. Configure the destination host with `launch_mode: "task"`, `remote_bin: "C:\\Program Files\\clip-remote-sync\\crs.exe"`, `task_bridge_dir: "C:\\ProgramData\\clip-remote-sync"`, `capture_task_name: "crs_capture"`, and `set_text_task_name: "crs_set_clipboard_text"`.
 
 ## Upgrading on Windows
 
 If `crs.exe` is already installed at `C:\Program Files\clip-remote-sync\crs.exe`, you can upgrade in place without recreating the scheduled tasks.
 
-1. Download the new `crs-windows-amd64.exe` and `SHA256SUMS` release assets.
-2. Verify the SHA-256 hash against the `crs-windows-amd64.exe` line in `SHA256SUMS`.
-3. Replace `C:\Program Files\clip-remote-sync\crs.exe` with the new binary.
-4. Keep the existing `crs_capture` and `crs_set_clipboard_text` tasks pointed at that same path.
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
+```
+
+Use `-Version v1.0.0` if you want to pin a specific release instead of the latest one.
 
 As long as the installed path does not change, the task setup does not need to be recreated for each upgrade.

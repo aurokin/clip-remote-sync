@@ -1,7 +1,7 @@
 GO ?= go
 GOLANGCI_LINT ?= $(if $(shell $(GO) env GOBIN),$(shell $(GO) env GOBIN),$(shell $(GO) env GOPATH)/bin)/golangci-lint
 
-.PHONY: build build-windows checksums fmt lint lint-fix test race vet check install tools
+.PHONY: build build-windows checksums verify-release-tree fmt lint lint-fix test race vet check install tools
 
 build:
 	$(GO) build -o bin/crs ./cmd/crs
@@ -11,6 +11,9 @@ build-windows:
 
 checksums: build build-windows
 	cd bin && sha256sum crs crs-windows-amd64.exe > SHA256SUMS
+
+verify-release-tree:
+	./scripts/check-release-tree.sh
 
 fmt:
 	$(GO) fmt ./...
@@ -30,7 +33,7 @@ race:
 vet:
 	$(GO) vet ./...
 
-check: fmt vet test race lint build build-windows
+check: verify-release-tree fmt vet test race lint build build-windows
 
 install:
 	$(GO) install ./cmd/crs
