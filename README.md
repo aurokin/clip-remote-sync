@@ -202,6 +202,8 @@ Available manual workflows:
 - `CI`: runs tests, race tests, vet, lint, and platform builds
 - `Release`: builds `crs`, `crs-windows-amd64.exe`, and `SHA256SUMS`, then publishes a GitHub release
 
+`setup-go` caching is intentionally disabled in this repository because there is currently no `go.sum`. If this project gains external Go module dependencies and a real `go.sum` is committed, re-enable caching in the workflows and point `cache-dependency-path` at the correct dependency file instead of leaving `cache: false`.
+
 ## Releases
 
 Future releases should be cut with the `Release` GitHub Actions workflow, not with an ad hoc local `gh release create` command.
@@ -210,12 +212,12 @@ From the GitHub UI:
 
 1. Open `Actions` in the repository.
 2. Select the `Release` workflow.
-3. Run it with a version like `v0.1.1`.
+3. Run it with a version like `v1.0.1`.
 
 Or trigger it with `gh`:
 
 ```bash
-gh workflow run release.yml --repo aurokin/clip-remote-sync -f version=v0.1.1
+gh workflow run release.yml --repo aurokin/clip-remote-sync -f version=v1.0.1
 ```
 
 The workflow validates the version, builds both binaries, writes `SHA256SUMS`, and publishes the release assets together.
