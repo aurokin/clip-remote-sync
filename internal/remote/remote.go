@@ -85,7 +85,7 @@ func captureDirect(command commandFunc, source SourceOptions) (CapturedData, err
 
 func setClipboardTextDirect(command commandFunc, source SourceOptions, text string) error {
 	if isLikelyWindowsCommand(source.RemoteBin) {
-		_, err := runRemotePowerShell(command, source.SSHTarget, buildDirectSetClipboardTextScript(source.RemoteBin, text))
+		_, err := runRemotePowerShellWithInput(command, source.SSHTarget, buildDirectSetClipboardTextScript(source.RemoteBin), text)
 		return err
 	}
 
@@ -195,7 +195,7 @@ func setClipboardTextViaTask(command commandFunc, source SourceOptions, text str
 	if err := ensureBridgeDirs(command, source.SSHTarget, bridge); err != nil {
 		return fmt.Errorf("prepare bridge directories: %w", err)
 	}
-	if _, err := runRemotePowerShell(command, source.SSHTarget, writeUTF8FileScript(inputPath, text)); err != nil {
+	if _, err := runRemotePowerShellWithInput(command, source.SSHTarget, writeUTF8FileFromSTDINScript(inputPath), text); err != nil {
 		return fmt.Errorf("write set-text input: %w", err)
 	}
 	if _, err := runRemotePowerShell(command, source.SSHTarget, writeUTF8FileScript(requestPath, string(requestBytes))); err != nil {
@@ -309,7 +309,7 @@ func waitForSetTextResult(command commandFunc, target, resultPath, requestID str
 
 func waitForRemoteJSONFile(command commandFunc, target, path string, timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
-	script := fmt.Sprintf(`if (Test-Path -LiteralPath '%s') { [Console]::Out.Write((Get-Content -LiteralPath '%s' -Raw)) } else { [Console]::Out.Write('%s') }`, escapeSingleQuotes(path), escapeSingleQuotes(path), missingRemoteFileSentinel)
+	script := fmt.Sprintf(`if (Test-Path -LiteralPath '%s') { $bytes=[System.IO.File]::ReadAllBytes('%s'); [Console]::Out.Write([Convert]::ToBase64String($bytes)) } else { [Console]::Out.Write('%s') }`, escapeSingleQuotes(path), escapeSingleQuotes(path), missingRemoteFileSentinel)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		output, err := runRemotePowerShell(command, target, script)
@@ -319,8 +319,14 @@ func waitForRemoteJSONFile(command commandFunc, target, path string, timeout tim
 				time.Sleep(taskPollInterval)
 				continue
 			}
-			if json.Valid(output) {
-				return string(output), nil
+			resultBytes, decodeErr := base64.StdEncoding.DecodeString(trimmed)
+			if decodeErr != nil {
+				lastErr = fmt.Errorf("decode remote result payload: %w", decodeErr)
+				time.Sleep(taskPollInterval)
+				continue
+			}
+			if json.Valid(resultBytes) {
+				return string(resultBytes), nil
 			}
 			lastErr = errors.New("result file exists but JSON is incomplete")
 			time.Sleep(taskPollInterval)
@@ -362,8 +368,22 @@ func runRemotePowerShell(command commandFunc, target, script string) ([]byte, er
 	return runSSH(command, target, buildEncodedPowerShellCommand(script))
 }
 
+func runRemotePowerShellWithInput(command commandFunc, target, script, input string) ([]byte, error) {
+	cmd := command("ssh", target, buildEncodedPowerShellCommand(script))
+	cmd.Stdin = strings.NewReader(input)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", err, bytes.TrimSpace(output))
+	}
+	return output, nil
+}
+
 func writeUTF8FileScript(path, value string) string {
 	return fmt.Sprintf(`$dir=[System.IO.Path]::GetDirectoryName('%s'); if (-not [string]::IsNullOrEmpty($dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }; [System.IO.File]::WriteAllText('%s', [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('%s')), (New-Object System.Text.UTF8Encoding($false)))`, escapeSingleQuotes(path), escapeSingleQuotes(path), base64.StdEncoding.EncodeToString([]byte(value)))
+}
+
+func writeUTF8FileFromSTDINScript(path string) string {
+	return fmt.Sprintf(`$dir=[System.IO.Path]::GetDirectoryName('%s'); if (-not [string]::IsNullOrEmpty($dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }; $text=[Console]::In.ReadToEnd(); [System.IO.File]::WriteAllText('%s', $text, (New-Object System.Text.UTF8Encoding($false)))`, escapeSingleQuotes(path), escapeSingleQuotes(path))
 }
 
 func escapeSingleQuotes(value string) string {
@@ -387,7 +407,7 @@ func buildDirectCaptureScript(remoteBin string) string {
 }
 
 func buildEncodedPowerShellCommand(script string) string {
-	script = "$ProgressPreference = 'SilentlyContinue'; " + script
+	script = "$ProgressPreference = 'SilentlyContinue'; $utf8NoBom = New-Object System.Text.UTF8Encoding($false); [Console]::InputEncoding = $utf8NoBom; [Console]::OutputEncoding = $utf8NoBom; $OutputEncoding = $utf8NoBom; " + script
 	utf16Units := utf16.Encode([]rune(script))
 	bytes := make([]byte, 0, len(utf16Units)*2)
 	for _, unit := range utf16Units {
@@ -396,8 +416,8 @@ func buildEncodedPowerShellCommand(script string) string {
 	return "powershell -NoProfile -NonInteractive -EncodedCommand " + base64.StdEncoding.EncodeToString(bytes)
 }
 
-func buildDirectSetClipboardTextScript(remoteBin, text string) string {
-	return fmt.Sprintf(`$text=[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('%s')); $psi=New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName='%s'; $psi.Arguments='_set-clipboard-text'; $psi.RedirectStandardInput=$true; $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true; $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true; $proc=[System.Diagnostics.Process]::Start($psi); $proc.StandardInput.Write($text); $proc.StandardInput.Close(); $proc.WaitForExit(); $stdout=$proc.StandardOutput.ReadToEnd(); $stderr=$proc.StandardError.ReadToEnd(); if (-not [string]::IsNullOrEmpty($stdout)) { [Console]::Out.Write($stdout) }; if (-not [string]::IsNullOrEmpty($stderr)) { [Console]::Error.Write($stderr) }; if ($proc.ExitCode -ne 0) { exit $proc.ExitCode }`, base64.StdEncoding.EncodeToString([]byte(text)), escapeSingleQuotes(remoteBin))
+func buildDirectSetClipboardTextScript(remoteBin string) string {
+	return fmt.Sprintf(`$text=[Console]::In.ReadToEnd(); $psi=New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName='%s'; $psi.Arguments='_set-clipboard-text'; $psi.RedirectStandardInput=$true; $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true; $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true; $proc=[System.Diagnostics.Process]::Start($psi); $proc.StandardInput.Write($text); $proc.StandardInput.Close(); $proc.WaitForExit(); $stdout=$proc.StandardOutput.ReadToEnd(); $stderr=$proc.StandardError.ReadToEnd(); if (-not [string]::IsNullOrEmpty($stdout)) { [Console]::Out.Write($stdout) }; if (-not [string]::IsNullOrEmpty($stderr)) { [Console]::Error.Write($stderr) }; if ($proc.ExitCode -ne 0) { exit $proc.ExitCode }`, escapeSingleQuotes(remoteBin))
 }
 
 func isLikelyWindowsCommand(remoteBin string) bool {

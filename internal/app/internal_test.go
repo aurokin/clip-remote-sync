@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -192,6 +194,78 @@ func TestWriteJSONAtomicReplacesExistingFile(t *testing.T) {
 	}
 }
 
+func TestReadClipboardTextInputDoesNotTruncateLargePayload(t *testing.T) {
+	t.Parallel()
+
+	payload := bytes.Repeat([]byte("a"), 2<<20)
+	got, err := readClipboardTextInput(bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("readClipboardTextInput: %v", err)
+	}
+	if !reflect.DeepEqual(got, payload) {
+		t.Fatalf("payload was truncated: got %d bytes want %d", len(got), len(payload))
+	}
+}
+
+func TestRunInternalSetClipboardTextReadsFullSTDIN(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping large stdin integration test in short mode")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux-specific clipboard writer test")
+	}
+
+	dir := t.TempDir()
+	wlCopyPath := filepath.Join(dir, "wl-copy")
+	stdinLogPath := filepath.Join(dir, "stdin.log")
+	script := "#!/bin/sh\ncat > " + shellQuote(stdinLogPath) + "\n"
+	if err := os.WriteFile(wlCopyPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake wl-copy: %v", err)
+	}
+
+	originalPath := os.Getenv("PATH")
+	if err := os.Setenv("PATH", dir+string(os.PathListSeparator)+originalPath); err != nil {
+		t.Fatalf("set PATH: %v", err)
+	}
+	defer os.Setenv("PATH", originalPath)
+
+	payload := bytes.Repeat([]byte("a"), 2<<20)
+	stdinFile, err := os.CreateTemp(t.TempDir(), "stdin-*")
+	if err != nil {
+		t.Fatalf("create stdin file: %v", err)
+	}
+	if _, err := stdinFile.Write(payload); err != nil {
+		t.Fatalf("write stdin file: %v", err)
+	}
+	if _, err := stdinFile.Seek(0, 0); err != nil {
+		t.Fatalf("rewind stdin file: %v", err)
+	}
+	defer stdinFile.Close()
+
+	originalStdin := os.Stdin
+	os.Stdin = stdinFile
+	defer func() { os.Stdin = originalStdin }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runInternal([]string{"_set-clipboard-text"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("expected success, got exit code %d, stderr=%q", exitCode, stderr.String())
+	}
+
+	got, err := os.ReadFile(stdinLogPath)
+	if err != nil {
+		t.Fatalf("read stdin log: %v", err)
+	}
+	if !reflect.DeepEqual(got, payload) {
+		t.Fatalf("payload was truncated: got %d bytes want %d", len(got), len(payload))
+	}
+}
+
 func protocolTaskRequest(requestID, inputPath, resultPath string) protocol.TaskRequest {
 	return protocol.TaskRequest{RequestID: requestID, InputPath: inputPath, ResultPath: resultPath}
+}
+
+func shellQuote(path string) string {
+	return "'" + strings.ReplaceAll(path, "'", `'"'"'`) + "'"
 }

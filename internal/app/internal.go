@@ -32,7 +32,7 @@ func runInternal(args []string, stdout io.Writer, stderr io.Writer) int {
 		}
 		return runCaptureTask(args[1], stderr)
 	case "_set-clipboard-text":
-		textBytes, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+		textBytes, err := readClipboardTextInput(os.Stdin)
 		if err != nil {
 			fmt.Fprintf(stderr, "Failed to read clipboard text from stdin: %v\n", err)
 			return 1
@@ -58,6 +58,10 @@ func runInternal(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Unknown internal command %q\n", args[0])
 		return 2
 	}
+}
+
+func readClipboardTextInput(r io.Reader) ([]byte, error) {
+	return io.ReadAll(r)
 }
 
 func captureToWriter(stdout io.Writer, stderr io.Writer) int {

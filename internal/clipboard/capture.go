@@ -10,9 +10,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/aurokin/clip-remote-sync/internal/protocol"
 )
+
+type textCaptureFunc func() (string, bool, error)
+type imageCaptureFunc func() ([]byte, bool, error)
 
 func CaptureLocal(command commandFunc) (protocol.CaptureEnvelope, error) {
 	switch runtime.GOOS {
@@ -22,6 +26,19 @@ func CaptureLocal(command commandFunc) (protocol.CaptureEnvelope, error) {
 		return captureLinux(command)
 	case "windows":
 		return captureWindows(command)
+	default:
+		return protocol.CaptureEnvelope{}, fmt.Errorf("unsupported local OS: %s", runtime.GOOS)
+	}
+}
+
+func CaptureLocalPreferText(command commandFunc) (protocol.CaptureEnvelope, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		return captureDarwinPreferText(command)
+	case "linux":
+		return captureLinuxPreferText(command)
+	case "windows":
+		return captureWindowsPreferText(command)
 	default:
 		return protocol.CaptureEnvelope{}, fmt.Errorf("unsupported local OS: %s", runtime.GOOS)
 	}
@@ -41,54 +58,96 @@ func captureDarwin(command commandFunc) (protocol.CaptureEnvelope, error) {
 	pngPath := filepath.Join(tmpDir, "clipboard.png")
 	tiffPath := filepath.Join(tmpDir, "clipboard.tiff")
 
-	if image, ok := readMacOSClipboardImage(command, pngPath, tiffPath); ok {
-		return imageEnvelope(image), nil
-	}
+	return capturePreferImage(
+		func() (string, bool, error) {
+			text, ok := readMacOSClipboardText(command)
+			return text, ok, nil
+		},
+		func() ([]byte, bool, error) {
+			image, ok := readMacOSClipboardImage(command, pngPath, tiffPath)
+			return image, ok, nil
+		},
+	)
+}
 
-	text, err := run(command, "pbpaste")
+func captureDarwinPreferText(command commandFunc) (protocol.CaptureEnvelope, error) {
+	tmpDir, err := os.MkdirTemp("", "crs-capture-*")
 	if err != nil {
-		return protocol.CaptureEnvelope{}, err
+		return protocol.CaptureEnvelope{}, fmt.Errorf("create temp dir: %w", err)
 	}
-	text, ok := normalizeCapturedText(text)
-	if !ok {
-		return protocol.CaptureEnvelope{}, errors.New("clipboard is empty or unsupported")
-	}
+	defer os.RemoveAll(tmpDir)
 
-	return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: text}, nil
+	pngPath := filepath.Join(tmpDir, "clipboard.png")
+	tiffPath := filepath.Join(tmpDir, "clipboard.tiff")
+
+	return capturePreferText(
+		func() (string, bool, error) {
+			text, ok := readMacOSClipboardText(command)
+			return text, ok, nil
+		},
+		func() ([]byte, bool, error) {
+			image, ok := readMacOSClipboardImage(command, pngPath, tiffPath)
+			return image, ok, nil
+		},
+	)
 }
 
 func captureLinux(command commandFunc) (protocol.CaptureEnvelope, error) {
-	if image, ok := readLinuxClipboardImage(command); ok {
-		return imageEnvelope(image), nil
-	}
-	if text, ok := readLinuxClipboardText(command); ok {
-		return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: text}, nil
-	}
-	return protocol.CaptureEnvelope{}, errors.New("clipboard is empty or unsupported")
+	return capturePreferImage(
+		func() (string, bool, error) {
+			text, ok := readLinuxClipboardText(command)
+			return text, ok, nil
+		},
+		func() ([]byte, bool, error) {
+			image, ok := readLinuxClipboardImage(command)
+			return image, ok, nil
+		},
+	)
+}
+
+func captureLinuxPreferText(command commandFunc) (protocol.CaptureEnvelope, error) {
+	return capturePreferText(
+		func() (string, bool, error) {
+			text, ok := readLinuxClipboardText(command)
+			return text, ok, nil
+		},
+		func() ([]byte, bool, error) {
+			image, ok := readLinuxClipboardImage(command)
+			return image, ok, nil
+		},
+	)
 }
 
 func captureWindows(command commandFunc) (protocol.CaptureEnvelope, error) {
-	imageOutput, err := runPowerShell(command, buildWindowsImageCaptureScript())
-	if err != nil {
-		return protocol.CaptureEnvelope{}, fmt.Errorf("capture windows image clipboard: %w", err)
-	}
-	if strings.TrimSpace(imageOutput) != "__CRS_NO_IMAGE__" {
-		return protocol.CaptureEnvelope{
-			Kind:           protocol.KindImage,
-			ImagePNGBase64: strings.TrimSpace(imageOutput),
-		}, nil
-	}
+	return capturePreferImage(
+		func() (string, bool, error) {
+			text, ok := readWindowsClipboardText(command)
+			return text, ok, nil
+		},
+		func() ([]byte, bool, error) {
+			return readWindowsClipboardImage(command)
+		},
+	)
+}
 
-	textOutput, err := runPowerShell(command, "$text = Get-Clipboard -Raw; if ([string]::IsNullOrWhiteSpace($text)) { exit 4 }; [Console]::Out.Write($text)")
-	if err != nil {
-		return protocol.CaptureEnvelope{}, errors.New("clipboard is empty or unsupported")
-	}
-	textOutput, ok := normalizeCapturedText(textOutput)
-	if !ok {
-		return protocol.CaptureEnvelope{}, errors.New("clipboard is empty or unsupported")
-	}
+func captureWindowsPreferText(command commandFunc) (protocol.CaptureEnvelope, error) {
+	return capturePreferText(
+		func() (string, bool, error) {
+			text, ok := readWindowsClipboardText(command)
+			return text, ok, nil
+		},
+		func() ([]byte, bool, error) {
+			return readWindowsClipboardImage(command)
+		},
+	)
+}
 
-	return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: textOutput}, nil
+func readMacOSClipboardText(command commandFunc) (string, bool) {
+	text, err := run(command, "pbpaste")
+	if err != nil {
+		return "", false
+	}
+	return normalizeCapturedText(text)
 }
 
 func readMacOSClipboardImage(command commandFunc, pngPath, tiffPath string) ([]byte, bool) {
@@ -158,6 +217,34 @@ func readLinuxClipboardText(command commandFunc) (string, bool) {
 	return "", false
 }
 
+func readWindowsClipboardText(command commandFunc) (string, bool) {
+	textOutput, err := runPowerShell(command, "$text = Get-Clipboard -Raw; if ([string]::IsNullOrWhiteSpace($text)) { exit 4 }; $bytes = [System.Text.Encoding]::UTF8.GetBytes($text); [Console]::Out.Write([Convert]::ToBase64String($bytes))")
+	if err != nil {
+		return "", false
+	}
+	textBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(textOutput))
+	if err != nil {
+		return "", false
+	}
+	return normalizeCapturedText(string(textBytes))
+}
+
+func readWindowsClipboardImage(command commandFunc) ([]byte, bool, error) {
+	imageOutput, err := runPowerShell(command, buildWindowsImageCaptureScript())
+	if err != nil {
+		return nil, false, fmt.Errorf("capture windows image clipboard: %w", err)
+	}
+	if strings.TrimSpace(imageOutput) == "__CRS_NO_IMAGE__" {
+		return nil, false, nil
+	}
+
+	image, err := base64.StdEncoding.DecodeString(strings.TrimSpace(imageOutput))
+	if err != nil {
+		return nil, false, fmt.Errorf("decode windows image clipboard: %w", err)
+	}
+	return image, true, nil
+}
+
 func readWaylandClipboardText(command commandFunc) (string, bool) {
 	if !hasCommand("wl-paste") {
 		return "", false
@@ -179,11 +266,24 @@ func readXclipClipboardText(command commandFunc) (string, bool) {
 	if !hasCommand("xclip") {
 		return "", false
 	}
-	text, err := run(command, "xclip", "-selection", "clipboard", "-o")
+	targetsOutput, err := run(command, "xclip", "-selection", "clipboard", "-t", "TARGETS", "-o")
 	if err != nil {
 		return "", false
 	}
-	return normalizeCapturedText(text)
+	availableTargets := parseXclipTargets(targetsOutput)
+	for _, target := range xclipTextTargets() {
+		if _, ok := availableTargets[target]; !ok {
+			continue
+		}
+		text, err := run(command, "xclip", "-selection", "clipboard", "-t", target, "-o")
+		if err != nil {
+			continue
+		}
+		if normalized, ok := normalizeCapturedText(text); ok {
+			return normalized, true
+		}
+	}
+	return "", false
 }
 
 func readXselClipboardText(command commandFunc) (string, bool) {
@@ -205,6 +305,29 @@ func normalizeCapturedText(text string) (string, bool) {
 	return text, true
 }
 
+func xclipTextTargets() []string {
+	return []string{
+		"UTF8_STRING",
+		"text/plain;charset=utf-8",
+		"text/plain;charset=UTF-8",
+		"text/plain",
+		"TEXT",
+		"STRING",
+	}
+}
+
+func parseXclipTargets(output string) map[string]struct{} {
+	targets := map[string]struct{}{}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		targets[line] = struct{}{}
+	}
+	return targets
+}
+
 func buildWindowsImageCaptureScript() string {
 	return strings.Join([]string{
 		"$img = Get-Clipboard -Format Image -ErrorAction SilentlyContinue",
@@ -224,6 +347,34 @@ func imageEnvelope(image []byte) protocol.CaptureEnvelope {
 		Kind:           protocol.KindImage,
 		ImagePNGBase64: base64.StdEncoding.EncodeToString(image),
 	}
+}
+
+func capturePreferText(textReader textCaptureFunc, imageReader imageCaptureFunc) (protocol.CaptureEnvelope, error) {
+	if text, ok, err := textReader(); err != nil {
+		return protocol.CaptureEnvelope{}, err
+	} else if ok {
+		return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: text}, nil
+	}
+	if image, ok, err := imageReader(); err != nil {
+		return protocol.CaptureEnvelope{}, err
+	} else if ok {
+		return imageEnvelope(image), nil
+	}
+	return protocol.CaptureEnvelope{}, errors.New("clipboard is empty or unsupported")
+}
+
+func capturePreferImage(textReader textCaptureFunc, imageReader imageCaptureFunc) (protocol.CaptureEnvelope, error) {
+	if image, ok, err := imageReader(); err != nil {
+		return protocol.CaptureEnvelope{}, err
+	} else if ok {
+		return imageEnvelope(image), nil
+	}
+	if text, ok, err := textReader(); err != nil {
+		return protocol.CaptureEnvelope{}, err
+	} else if ok {
+		return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: text}, nil
+	}
+	return protocol.CaptureEnvelope{}, errors.New("clipboard is empty or unsupported")
 }
 
 func writeClipboardPNGMacOS(command commandFunc, outPath string) error {
@@ -305,10 +456,25 @@ func runBytes(command commandFunc, name string, args ...string) ([]byte, error) 
 }
 
 func runPowerShell(command commandFunc, script string) (string, error) {
-	return run(command, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	script = "$ProgressPreference = 'SilentlyContinue'; $utf8NoBom = New-Object System.Text.UTF8Encoding($false); [Console]::InputEncoding = $utf8NoBom; [Console]::OutputEncoding = $utf8NoBom; $OutputEncoding = $utf8NoBom; " + script
+	cmd := command("powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShellScript(script))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, bytes.TrimSpace(output))
+	}
+	return string(output), nil
 }
 
 func hasCommand(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
+}
+
+func encodePowerShellScript(script string) string {
+	utf16Units := utf16.Encode([]rune(script))
+	encoded := make([]byte, 0, len(utf16Units)*2)
+	for _, unit := range utf16Units {
+		encoded = append(encoded, byte(unit), byte(unit>>8))
+	}
+	return base64.StdEncoding.EncodeToString(encoded)
 }

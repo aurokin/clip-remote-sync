@@ -138,6 +138,12 @@ func TestBuildWindowsSetTextScriptClearsClipboardBeforeSettingText(t *testing.T)
 	t.Parallel()
 
 	script := buildWindowsSetTextScript()
+	if !strings.Contains(script, `System.Text.UTF8Encoding($false)`) {
+		t.Fatalf("expected windows set-text script to use utf8 stdin decoding, got %s", script)
+	}
+	if !strings.Contains(script, `System.IO.StreamReader([Console]::OpenStandardInput(), $utf8NoBom)`) {
+		t.Fatalf("expected windows set-text script to read stdin via stream reader, got %s", script)
+	}
 	if !strings.Contains(script, `[System.Windows.Forms.Clipboard]::Clear()`) {
 		t.Fatalf("expected windows set-text script to clear clipboard first, got %s", script)
 	}

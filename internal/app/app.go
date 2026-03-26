@@ -2,6 +2,7 @@ package app
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -22,6 +23,7 @@ type dependencies struct {
 	defaultConfigPath      func() (string, error)
 	loadConfig             func(string) (Config, error)
 	remoteCapture          func(source remote.SourceOptions) (remote.CapturedData, error)
+	localCapturePreferText func() (protocol.CaptureEnvelope, error)
 	remoteSetClipboardText func(source remote.SourceOptions, text string) error
 	setLocalClipboard      func(text string) error
 	setLocalImageClipboard func([]byte) error
@@ -34,6 +36,9 @@ func defaultDependencies() dependencies {
 		loadConfig:        loadConfig,
 		remoteCapture: func(source remote.SourceOptions) (remote.CapturedData, error) {
 			return remote.Capture(exec.Command, source)
+		},
+		localCapturePreferText: func() (protocol.CaptureEnvelope, error) {
+			return clipboard.CaptureLocalPreferText(exec.Command)
 		},
 		remoteSetClipboardText: func(source remote.SourceOptions, text string) error {
 			return remote.SetClipboardText(exec.Command, source, text)
@@ -54,6 +59,7 @@ type application struct {
 
 type publicRequest struct {
 	configPath string
+	reverse    bool
 	sourceName string
 }
 
@@ -76,6 +82,10 @@ func (a application) run(args []string, stdout io.Writer, stderr io.Writer) int 
 		return exitCode
 	}
 
+	if req.reverse {
+		return a.runReverse(cfg, req.sourceName, remoteSource, stdout, stderr)
+	}
+
 	captured, err := a.deps.remoteCapture(remoteSource)
 	if err != nil {
 		fmt.Fprintf(stderr, "Failed to capture clipboard from %s: %v\n", req.sourceName, err)
@@ -91,7 +101,9 @@ func (a application) parsePublicArgs(args []string, stdout io.Writer, stderr io.
 
 	configPathFlag := fs.String("config", "", "Path to config file")
 	help := fs.Bool("help", false, "Show help")
+	reverse := fs.Bool("reverse", false, "Sync clipboard content from the local machine to the source")
 	fs.BoolVar(help, "h", false, "Show help")
+	fs.BoolVar(reverse, "r", false, "Sync clipboard content from the local machine to the source")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -121,7 +133,7 @@ func (a application) parsePublicArgs(args []string, stdout io.Writer, stderr io.
 		}
 	}
 
-	return publicRequest{configPath: configPath, sourceName: fs.Arg(0)}, 0, false
+	return publicRequest{configPath: configPath, reverse: *reverse, sourceName: fs.Arg(0)}, 0, false
 }
 
 func (a application) loadPublicContext(req publicRequest, stderr io.Writer) (Config, SourceConfig, remote.SourceOptions, int, bool) {
@@ -135,6 +147,10 @@ func (a application) loadPublicContext(req publicRequest, stderr io.Writer) (Con
 	sourceCfg, ok := cfg.Sources[req.sourceName]
 	if !ok {
 		fmt.Fprintf(stderr, "Unknown source %q. Configured sources: %s\n", req.sourceName, strings.Join(configuredSources(cfg), ", "))
+		return Config{}, SourceConfig{}, remote.SourceOptions{}, 1, false
+	}
+	if err := validateSourceUsage(sourceCfg, req.reverse); err != nil {
+		fmt.Fprintf(stderr, "Invalid source %q config: %v\n", req.sourceName, err)
 		return Config{}, SourceConfig{}, remote.SourceOptions{}, 1, false
 	}
 
@@ -203,6 +219,44 @@ func (a application) applyCapturedImage(sourceName string, remoteSource remote.S
 	return 0
 }
 
+func (a application) runReverse(cfg Config, sourceName string, remoteSource remote.SourceOptions, stdout io.Writer, stderr io.Writer) int {
+	captured, err := a.deps.localCapturePreferText()
+	if err != nil {
+		fmt.Fprintf(stderr, "Failed to capture local clipboard: %v\n", err)
+		return 1
+	}
+
+	switch captured.Kind {
+	case protocol.KindText:
+		if err := a.deps.remoteSetClipboardText(remoteSource, captured.Text); err != nil {
+			fmt.Fprintf(stderr, "Failed to set %s clipboard: %v\n", sourceName, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "Clipboard synced from %s to %s\n", destinationName(cfg), sourceName)
+		return 0
+	case protocol.KindImage:
+		imagePNG, err := decodeCapturedImage(captured)
+		if err != nil {
+			fmt.Fprintf(stderr, "Failed to decode local image clipboard: %v\n", err)
+			return 1
+		}
+		savedPath, err := a.deps.saveImage(imagePNG)
+		if err != nil {
+			fmt.Fprintf(stderr, "Failed to save local image: %v\n", err)
+			return 1
+		}
+		if err := a.deps.remoteSetClipboardText(remoteSource, savedPath); err != nil {
+			fmt.Fprintf(stderr, "Local image saved to %s, but failed to update %s clipboard: %v. Remote clipboard state is unknown.\n", savedPath, sourceName, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "Local image saved to %s and synced to %s as text\n", savedPath, sourceName)
+		return 0
+	default:
+		fmt.Fprintf(stderr, "Unsupported local capture kind %q\n", captured.Kind)
+		return 1
+	}
+}
+
 func destinationName(cfg Config) string {
 	if cfg.Destination.Name != "" {
 		return cfg.Destination.Name
@@ -211,21 +265,26 @@ func destinationName(cfg Config) string {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: crs [--config PATH] <source>")
+	fmt.Fprintln(w, "Usage: crs [--config PATH] [-r] <source>")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Sync clipboard content from a configured source to the local machine.")
+	fmt.Fprintln(w, "Sync clipboard content between the local machine and a configured source.")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "If the source clipboard contains an image, it is saved locally into /tmp/clip/<generated>.png,")
-	fmt.Fprintln(w, "the local clipboard is updated to the image, and the source clipboard is updated to that local path.")
+	fmt.Fprintln(w, "Default mode pulls from the source clipboard into the local clipboard.")
+	fmt.Fprintln(w, "With -r, local text is pushed to the source clipboard; if the local clipboard only has an image,")
+	fmt.Fprintln(w, "it is saved locally and that destination-local path is pushed to the source clipboard.")
 }
 
 func saveImage(imagePNG []byte) (string, error) {
-	if err := os.MkdirAll("/tmp/clip", 0o755); err != nil {
-		return "", fmt.Errorf("create /tmp/clip: %w", err)
+	return saveImageToDir(imagePNG, imageSaveDir())
+}
+
+func saveImageToDir(imagePNG []byte, dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create %s: %w", dir, err)
 	}
 
 	fileName := fmt.Sprintf("clipboard-%s-%s.png", timestampNow(), randomSuffix())
-	path := filepath.Join("/tmp/clip", fileName)
+	path := filepath.Join(dir, fileName)
 	if err := os.WriteFile(path, imagePNG, 0o644); err != nil {
 		return "", fmt.Errorf("write %s: %w", path, err)
 	}
@@ -243,4 +302,38 @@ func randomSuffix() string {
 		return "00000000"
 	}
 	return hex.EncodeToString(buf)
+}
+
+func decodeCapturedImage(captured protocol.CaptureEnvelope) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(captured.ImagePNGBase64)
+}
+
+func imageSaveDir() string {
+	return imageSaveDirFor(filepath.Separator, os.TempDir())
+}
+
+func imageSaveDirFor(separator uint8, tempDir string) string {
+	if separator == '\\' {
+		return strings.TrimRight(tempDir, `\/`) + `\clip`
+	}
+	return "/tmp/clip"
+}
+
+func validateSourceUsage(sourceCfg SourceConfig, reverse bool) error {
+	if sourceCfg.LaunchMode != "task" {
+		return nil
+	}
+	if reverse {
+		if sourceCfg.SetTextTaskName == "" {
+			return errors.New("task launch_mode requires set_text_task_name for reverse sync")
+		}
+		return nil
+	}
+	if sourceCfg.CaptureTaskName == "" {
+		return errors.New("task launch_mode requires capture_task_name")
+	}
+	if sourceCfg.SetTextTaskName == "" {
+		return errors.New("task launch_mode requires set_text_task_name")
+	}
+	return nil
 }

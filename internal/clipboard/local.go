@@ -108,7 +108,9 @@ func pipeTo(cmd *exec.Cmd, text string) error {
 func buildWindowsSetTextScript() string {
 	return strings.Join([]string{
 		"Add-Type -AssemblyName System.Windows.Forms",
-		"$text = [Console]::In.ReadToEnd()",
+		"$utf8NoBom = New-Object System.Text.UTF8Encoding($false)",
+		"$reader = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), $utf8NoBom)",
+		"$text = $reader.ReadToEnd()",
 		"[System.Windows.Forms.Clipboard]::Clear()",
 		"[System.Windows.Forms.Clipboard]::SetText($text)",
 	}, "; ")

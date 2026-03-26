@@ -15,6 +15,13 @@
       "task_bridge_dir": "C:\\ProgramData\\clip-remote-sync",
       "capture_task_name": "crs_capture",
       "set_text_task_name": "crs_set_clipboard_text"
+    },
+    "windows_reverse_only_for_crs_r": {
+      "ssh_target": "user@windows-source.example",
+      "launch_mode": "task",
+      "remote_bin": "C:\\Program Files\\clip-remote-sync\\crs.exe",
+      "task_bridge_dir": "C:\\ProgramData\\clip-remote-sync",
+      "set_text_task_name": "crs_set_clipboard_text"
     }
   }
 }

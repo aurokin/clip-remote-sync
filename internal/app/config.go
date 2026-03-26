@@ -70,14 +70,6 @@ func loadConfig(configPath string) (Config, error) {
 		if source.LaunchMode != "" && source.LaunchMode != "direct" && source.LaunchMode != "task" {
 			return cfg, fmt.Errorf("source %q has unsupported launch_mode %q", name, source.LaunchMode)
 		}
-		if source.LaunchMode == "task" {
-			if source.CaptureTaskName == "" {
-				return cfg, fmt.Errorf("source %q is missing capture_task_name", name)
-			}
-			if source.SetTextTaskName == "" {
-				return cfg, fmt.Errorf("source %q is missing set_text_task_name", name)
-			}
-		}
 	}
 
 	return cfg, nil

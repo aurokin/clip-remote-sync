@@ -70,8 +70,8 @@ func TestBridgePathsDefaults(t *testing.T) {
 
 func TestWaitForRemoteJSONFileIgnoresPartialJSONUntilValid(t *testing.T) {
 	command, _ := scriptedCommand(t, []fakeCommandStep{
-		{stdout: `{"request_id":`, exitCode: 0},
-		{stdout: `{"request_id":"abc123","ok":true}`, exitCode: 0},
+		{stdout: base64.StdEncoding.EncodeToString([]byte(`{"request_id":`)), exitCode: 0},
+		{stdout: base64.StdEncoding.EncodeToString([]byte(`{"request_id":"abc123","ok":true}`)), exitCode: 0},
 	})
 
 	result, err := waitForRemoteJSONFile(command, "ignored", `C:\ProgramData\clip-remote-sync\results\capture-abc123.json`, 700*time.Millisecond)
@@ -84,7 +84,7 @@ func TestWaitForRemoteJSONFileIgnoresPartialJSONUntilValid(t *testing.T) {
 }
 
 func TestWaitForRemoteJSONFileReturnsIncompleteJSONErrorAfterTimeout(t *testing.T) {
-	command, _ := scriptedCommand(t, []fakeCommandStep{{stdout: `{"request_id":`, exitCode: 0}})
+	command, _ := scriptedCommand(t, []fakeCommandStep{{stdout: base64.StdEncoding.EncodeToString([]byte(`{"request_id":`)), exitCode: 0}})
 
 	_, err := waitForRemoteJSONFile(command, "ignored", `C:\ProgramData\clip-remote-sync\results\capture-abc123.json`, 350*time.Millisecond)
 	if err == nil {
@@ -95,9 +95,27 @@ func TestWaitForRemoteJSONFileReturnsIncompleteJSONErrorAfterTimeout(t *testing.
 	}
 }
 
+func TestWaitForRemoteJSONFileDecodesUnicodeUTF8Payload(t *testing.T) {
+	t.Parallel()
+
+	payload := `{"request_id":"abc123","ok":true,"capture":{"kind":"text","text":"héllo 👋 你好"}}`
+	command, _ := scriptedCommand(t, []fakeCommandStep{{
+		stdout:   base64.StdEncoding.EncodeToString([]byte(payload)),
+		exitCode: 0,
+	}})
+
+	result, err := waitForRemoteJSONFile(command, "ignored", `C:\ProgramData\clip-remote-sync\results\capture-abc123.json`, 200*time.Millisecond)
+	if err != nil {
+		t.Fatalf("waitForRemoteJSONFile: %v", err)
+	}
+	if result != payload {
+		t.Fatalf("unexpected result payload: %q", result)
+	}
+}
+
 func TestWaitForCaptureResultRejectsRequestIDMismatch(t *testing.T) {
 	command, _ := scriptedCommand(t, []fakeCommandStep{{
-		stdout:   `{"request_id":"wrong","ok":true,"capture":{"kind":"text","text":"hello"}}`,
+		stdout:   base64.StdEncoding.EncodeToString([]byte(`{"request_id":"wrong","ok":true,"capture":{"kind":"text","text":"hello"}}`)),
 		exitCode: 0,
 	}})
 
@@ -112,7 +130,7 @@ func TestWaitForCaptureResultRejectsRequestIDMismatch(t *testing.T) {
 
 func TestWaitForSetTextResultRejectsRequestIDMismatch(t *testing.T) {
 	command, _ := scriptedCommand(t, []fakeCommandStep{{
-		stdout:   `{"request_id":"wrong","ok":true}`,
+		stdout:   base64.StdEncoding.EncodeToString([]byte(`{"request_id":"wrong","ok":true}`)),
 		exitCode: 0,
 	}})
 
@@ -204,7 +222,7 @@ func TestCaptureDirectUsesPowerShellForWindowsRemoteBinWithSpaces(t *testing.T) 
 }
 
 func TestSetClipboardTextDirectUsesPowerShellForWindowsRemoteBinWithSpaces(t *testing.T) {
-	command, logPath := scriptedCommand(t, []fakeCommandStep{{exitCode: 0}})
+	command, logPath, stdinDir := stdinAndLogCommand(t, []fakeCommandStep{{exitCode: 0}})
 
 	if err := SetClipboardText(command, SourceOptions{SSHTarget: "ignored", RemoteBin: `C:\\Program Files\\clip-remote-sync\\crs.exe`, LaunchMode: "direct"}, "/tmp/clip/test.png"); err != nil {
 		t.Fatalf("SetClipboardText: %v", err)
@@ -222,6 +240,70 @@ func TestSetClipboardTextDirectUsesPowerShellForWindowsRemoteBinWithSpaces(t *te
 	if !strings.Contains(decoded, `$psi.FileName='C:\\Program Files\\clip-remote-sync\\crs.exe'`) {
 		t.Fatalf("expected windows direct script to quote remote bin, got %s", decoded)
 	}
+	if !strings.Contains(decoded, `[Console]::In.ReadToEnd()`) {
+		t.Fatalf("expected windows direct script to read stdin, got %s", decoded)
+	}
+	if !strings.Contains(decoded, `[Console]::InputEncoding = $utf8NoBom`) {
+		t.Fatalf("expected windows direct script to force utf8 input, got %s", decoded)
+	}
+	stdinBytes, err := os.ReadFile(filepath.Join(stdinDir, "stdin-1.log"))
+	if err != nil {
+		t.Fatalf("read stdin log: %v", err)
+	}
+	if string(stdinBytes) != "/tmp/clip/test.png" {
+		t.Fatalf("unexpected stdin payload: %q", string(stdinBytes))
+	}
+}
+
+func TestSetClipboardTextDirectWritesLargeInputViaSTDINOnWindows(t *testing.T) {
+	command, logPath, stdinDir := stdinAndLogCommand(t, []fakeCommandStep{{exitCode: 0}})
+
+	largeText := strings.Repeat("hello world\n", 20000)
+	if err := SetClipboardText(command, SourceOptions{SSHTarget: "ignored", RemoteBin: `C:\\Program Files\\clip-remote-sync\\crs.exe`, LaunchMode: "direct"}, largeText); err != nil {
+		t.Fatalf("SetClipboardText: %v", err)
+	}
+
+	stdinBytes, err := os.ReadFile(filepath.Join(stdinDir, "stdin-1.log"))
+	if err != nil {
+		t.Fatalf("read stdin log: %v", err)
+	}
+	if string(stdinBytes) != largeText {
+		t.Fatalf("unexpected stdin payload length: got %d want %d", len(stdinBytes), len(largeText))
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	log := string(logBytes)
+	if !logContainsEncodedScript(log, `[Console]::In.ReadToEnd()`) {
+		t.Fatalf("expected direct set-text to read from stdin, got %s", log)
+	}
+}
+
+func TestSetClipboardTextDirectWritesUnicodeInputViaSTDINOnWindows(t *testing.T) {
+	command, logPath, stdinDir := stdinAndLogCommand(t, []fakeCommandStep{{exitCode: 0}})
+
+	text := "héllo 👋 你好"
+	if err := SetClipboardText(command, SourceOptions{SSHTarget: "ignored", RemoteBin: `C:\\Program Files\\clip-remote-sync\\crs.exe`, LaunchMode: "direct"}, text); err != nil {
+		t.Fatalf("SetClipboardText: %v", err)
+	}
+
+	stdinBytes, err := os.ReadFile(filepath.Join(stdinDir, "stdin-1.log"))
+	if err != nil {
+		t.Fatalf("read stdin log: %v", err)
+	}
+	if string(stdinBytes) != text {
+		t.Fatalf("unexpected stdin payload: %q", string(stdinBytes))
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if !logContainsEncodedScript(string(logBytes), `[Console]::InputEncoding = $utf8NoBom`) {
+		t.Fatalf("expected utf8 console setup in direct path, got %s", string(logBytes))
+	}
 }
 
 func TestCaptureViaTaskSuccess(t *testing.T) {
@@ -229,7 +311,7 @@ func TestCaptureViaTaskSuccess(t *testing.T) {
 		{exitCode: 0},
 		{exitCode: 0},
 		{exitCode: 0},
-		{stdout: `{"request_id":"abc123","ok":true,"capture":{"kind":"text","text":"hello"}}`, exitCode: 0},
+		{stdout: base64.StdEncoding.EncodeToString([]byte(`{"request_id":"abc123","ok":true,"capture":{"kind":"text","text":"hello"}}`)), exitCode: 0},
 		{exitCode: 0},
 	})
 
@@ -264,7 +346,7 @@ func TestSetClipboardTextViaTaskSuccess(t *testing.T) {
 		{exitCode: 0},
 		{exitCode: 0},
 		{exitCode: 0},
-		{stdout: `{"request_id":"abc123","ok":true}`, exitCode: 0},
+		{stdout: base64.StdEncoding.EncodeToString([]byte(`{"request_id":"abc123","ok":true}`)), exitCode: 0},
 		{exitCode: 0},
 	})
 
@@ -286,6 +368,82 @@ func TestSetClipboardTextViaTaskSuccess(t *testing.T) {
 	}
 	if !logContainsEncodedScript(log, `Remove-Item -LiteralPath 'C:\ProgramData\clip-remote-sync\results\set-text-abc123.json'`) {
 		t.Fatalf("expected set-text result cleanup in log, got %s", log)
+	}
+}
+
+func TestSetClipboardTextViaTaskWritesLargeInputViaSTDINOnWindows(t *testing.T) {
+	command, logPath, stdinDir := stdinAndLogCommand(t, []fakeCommandStep{
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{stdout: base64.StdEncoding.EncodeToString([]byte(`{"request_id":"abc123","ok":true}`)), exitCode: 0},
+		{exitCode: 0},
+	})
+
+	originalRequestID := newRequestIDFunc
+	newRequestIDFunc = func() (string, error) { return "abc123", nil }
+	defer func() { newRequestIDFunc = originalRequestID }()
+
+	largeText := strings.Repeat("hello world\n", 20000)
+	if err := setClipboardTextViaTask(command, SourceOptions{SSHTarget: "ignored", LaunchMode: "task", SetTextTaskName: "crs_set_text"}, largeText); err != nil {
+		t.Fatalf("setClipboardTextViaTask: %v", err)
+	}
+
+	stdinBytes, err := os.ReadFile(filepath.Join(stdinDir, "stdin-2.log"))
+	if err != nil {
+		t.Fatalf("read stdin log: %v", err)
+	}
+	if string(stdinBytes) != largeText {
+		t.Fatalf("unexpected stdin payload length: got %d want %d", len(stdinBytes), len(largeText))
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	log := string(logBytes)
+	if !logContainsEncodedScript(log, `[Console]::In.ReadToEnd()`) {
+		t.Fatalf("expected set-text input write to read from stdin, got %s", log)
+	}
+	if !logContainsEncodedScript(log, `[Console]::InputEncoding = $utf8NoBom`) {
+		t.Fatalf("expected utf8 console setup in task path, got %s", log)
+	}
+}
+
+func TestSetClipboardTextViaTaskWritesUnicodeInputViaSTDINOnWindows(t *testing.T) {
+	command, logPath, stdinDir := stdinAndLogCommand(t, []fakeCommandStep{
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{exitCode: 0},
+		{stdout: base64.StdEncoding.EncodeToString([]byte(`{"request_id":"abc123","ok":true}`)), exitCode: 0},
+		{exitCode: 0},
+	})
+
+	originalRequestID := newRequestIDFunc
+	newRequestIDFunc = func() (string, error) { return "abc123", nil }
+	defer func() { newRequestIDFunc = originalRequestID }()
+
+	text := "héllo 👋 你好"
+	if err := setClipboardTextViaTask(command, SourceOptions{SSHTarget: "ignored", LaunchMode: "task", SetTextTaskName: "crs_set_text"}, text); err != nil {
+		t.Fatalf("setClipboardTextViaTask: %v", err)
+	}
+
+	stdinBytes, err := os.ReadFile(filepath.Join(stdinDir, "stdin-2.log"))
+	if err != nil {
+		t.Fatalf("read stdin log: %v", err)
+	}
+	if string(stdinBytes) != text {
+		t.Fatalf("unexpected stdin payload: %q", string(stdinBytes))
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if !logContainsEncodedScript(string(logBytes), `[Console]::InputEncoding = $utf8NoBom`) {
+		t.Fatalf("expected utf8 console setup in task path, got %s", string(logBytes))
 	}
 }
 
@@ -386,6 +544,12 @@ func TestBuildEncodedPowerShellCommand(t *testing.T) {
 	if !strings.HasPrefix(decoded, "$ProgressPreference = 'SilentlyContinue'; ") {
 		t.Fatalf("expected encoded powershell command to silence progress, got %s", decoded)
 	}
+	if !strings.Contains(decoded, `[Console]::InputEncoding = $utf8NoBom`) {
+		t.Fatalf("expected encoded powershell command to set utf8 input, got %s", decoded)
+	}
+	if !strings.Contains(decoded, `[Console]::OutputEncoding = $utf8NoBom`) {
+		t.Fatalf("expected encoded powershell command to set utf8 output, got %s", decoded)
+	}
 }
 
 func TestWriteUTF8FileScriptContainsBase64Payload(t *testing.T) {
@@ -398,6 +562,32 @@ func TestWriteUTF8FileScriptContainsBase64Payload(t *testing.T) {
 	}
 	if !strings.Contains(script, "WriteAllText") {
 		t.Fatalf("script missing WriteAllText call: %s", script)
+	}
+}
+
+func TestWriteUTF8FileFromSTDINScriptReadsConsoleInput(t *testing.T) {
+	t.Parallel()
+
+	script := writeUTF8FileFromSTDINScript(`C:\ProgramData\clip-remote-sync\requests\set-text-abc123.txt`)
+	if !strings.Contains(script, "[Console]::In.ReadToEnd()") {
+		t.Fatalf("expected stdin read in script, got %s", script)
+	}
+	if strings.Contains(script, base64.StdEncoding.EncodeToString([]byte("hello world"))) {
+		t.Fatalf("did not expect embedded payload in script: %s", script)
+	}
+}
+
+func TestRunRemotePowerShellWithInputFormatsSSHFailure(t *testing.T) {
+	t.Parallel()
+
+	command, _ := scriptedCommand(t, []fakeCommandStep{{stderr: "ssh failed", exitCode: 1}})
+
+	_, err := runRemotePowerShellWithInput(command, "ignored", "Write-Output 'hello'", "payload")
+	if err == nil {
+		t.Fatal("expected runRemotePowerShellWithInput to fail")
+	}
+	if !strings.Contains(err.Error(), "ssh failed") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -518,6 +708,44 @@ func stdinCommand(t *testing.T, steps []fakeCommandStep) (commandFunc, string) {
 		cmdArgs := append([]string{scriptPath, name}, args...)
 		return exec.Command("sh", cmdArgs...)
 	}, stdinPath
+}
+
+func stdinAndLogCommand(t *testing.T, steps []fakeCommandStep) (commandFunc, string, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.txt")
+	stdinDir := filepath.Join(dir, "stdin")
+	logPath := filepath.Join(dir, "commands.log")
+	scriptPath := filepath.Join(dir, "fake-ssh.sh")
+
+	var script strings.Builder
+	script.WriteString("#!/bin/sh\n")
+	script.WriteString(fmt.Sprintf("state_path=%q\n", statePath))
+	script.WriteString(fmt.Sprintf("stdin_dir=%q\n", stdinDir))
+	script.WriteString(fmt.Sprintf("log_path=%q\n", logPath))
+	script.WriteString("mkdir -p \"$stdin_dir\"\n")
+	script.WriteString("printf '%s\n' \"$*\" >> \"$log_path\"\n")
+	script.WriteString("count=0\n")
+	script.WriteString("if [ -f \"$state_path\" ]; then count=$(cat \"$state_path\"); fi\n")
+	script.WriteString("count=$((count + 1))\n")
+	script.WriteString("printf '%s' \"$count\" > \"$state_path\"\n")
+	script.WriteString("cat > \"$stdin_dir/stdin-$count.log\"\n")
+	script.WriteString("case \"$count\" in\n")
+	for index, step := range steps {
+		writeCommandCase(&script, index+1, step)
+	}
+	writeCommandCase(&script, -1, steps[len(steps)-1])
+	script.WriteString("esac\n")
+
+	if err := os.WriteFile(scriptPath, []byte(script.String()), 0o755); err != nil {
+		t.Fatalf("write fake ssh script: %v", err)
+	}
+
+	return func(name string, args ...string) *exec.Cmd {
+		cmdArgs := append([]string{scriptPath, name}, args...)
+		return exec.Command("sh", cmdArgs...)
+	}, logPath, stdinDir
 }
 
 func writeCommandCase(script *strings.Builder, index int, step fakeCommandStep) {

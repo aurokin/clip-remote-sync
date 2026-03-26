@@ -1,6 +1,6 @@
 # clip-remote-sync
 
-`crs` syncs clipboard content from a configured source machine to the local machine.
+`crs` syncs clipboard content between the local machine and a configured source machine.
 
 The scope is intentionally narrow: one command, one destination machine, and predictable clipboard behavior for text and images.
 
@@ -8,6 +8,7 @@ The scope is intentionally narrow: one command, one destination machine, and pre
 
 ```bash
 crs <source>
+crs -r <source>
 ```
 
 Examples:
@@ -15,26 +16,37 @@ Examples:
 ```bash
 crs luma
 crs haste
+crs -r haste
 ```
 
 ## Behavior Contract
 
-`crs <source>` always runs on the destination machine.
+`crs` always runs on the destination machine.
 
-Text flow:
+Default text flow:
 
 1. `crs` captures text from the source clipboard.
 2. Trailing line endings are normalized.
 3. The destination clipboard is updated to that text.
 
-Image flow:
+Default image flow:
 
 1. `crs` captures image bytes from the source clipboard.
 2. The image is written locally on the destination at `/tmp/clip/<generated>.png`.
 3. The destination clipboard is updated to the image itself.
 4. The source clipboard is updated to the destination-local `/tmp/clip/<generated>.png` path as text.
 
-This matches the remote-workflow case where you are operating `bront` from another machine and want:
+Reverse text flow:
+
+1. `crs -r <source>` captures local clipboard content with text preferred over image.
+2. If local text is present, the source clipboard is updated to that text.
+
+Reverse image fallback:
+
+1. If local text is absent and the local clipboard only contains an image, `crs -r <source>` writes the image locally to a destination-local saved path.
+2. The source clipboard is updated to that destination-local path as text.
+
+For example, on a Linux destination like `bront`, this matches the remote-workflow case where you want:
 
 - the actual image available on `bront`
 - a pasteable `/tmp/clip/...png` path back on the source machine
@@ -49,8 +61,8 @@ In particular, if the source clipboard contains `/tmp/clip/...png` as text, Code
 
 These choices are deliberate and should not be changed casually:
 
-- `crs` is intentionally asymmetric. It is designed around a primary destination machine pulling from configured source machines, not around bidirectional or peer-to-peer clipboard sync.
-- The public human interface is `crs <source>`. Internal subcommands such as `_capture` and `_set-clipboard-text` are implementation details for transport and task runners.
+- `crs` is pull-first. `crs <source>` pulls from the source, and `crs -r <source>` is an explicit reverse push back to the source. Automatic bidirectional or peer-to-peer clipboard sync remains out of scope.
+- The public human interface is `crs <source>` and `crs -r <source>`. Internal subcommands such as `_capture` and `_set-clipboard-text` are implementation details for transport and task runners.
 - Image sync intentionally writes a simple destination-local path like `/tmp/clip/...png` back to the source clipboard. That is less technically precise than a host-qualified locator, but it is the intended workflow for remote operation and agent tooling.
 - Windows `launch_mode: "task"` exists because direct SSH-launched clipboard access was not reliable in the interactive desktop session. Do not replace task mode with direct mode on Windows without re-proving that constraint on real machines.
 
@@ -83,7 +95,7 @@ Linux source requirements:
 
 - For reading image clipboard data: `wl-paste` or `xclip`
 - For reading text clipboard data: `wl-paste`, `xclip`, or `xsel`
-- For writing the returned text path back into the clipboard: `wl-copy`, `xclip`, or `xsel`
+- For writing reverse text or a returned destination-local path back into the clipboard: `wl-copy`, `xclip`, or `xsel`
 
 If your Linux source is Wayland-based, the expected pair is `wl-paste` and `wl-copy`.
 
@@ -92,34 +104,54 @@ Windows source requirements:
 - SSH access into the Windows machine
 - `crs.exe` installed and reachable over SSH
 - PowerShell available for clipboard access
-- Two scheduled tasks that run in the interactive user session
+- One or two scheduled tasks that run in the interactive user session, depending on which flows you use
 
 Recommended task actions:
 
 - capture task: `crs.exe _capture-task-runner C:\ProgramData\clip-remote-sync`
 - set-text task: `crs.exe _set-clipboard-text-task-runner C:\ProgramData\clip-remote-sync`
 
-In task mode, `crs` writes request-scoped files under `requests\` and waits for matching result files under `results\`. That keeps concurrent runs isolated while still using Task Scheduler as the session bridge.
+In task mode, `crs` writes request-scoped files under `requests\` and waits for matching result files under `results\`. That keeps concurrent runs isolated while still using Task Scheduler as the session bridge. `crs <source>` needs both tasks. `crs -r <source>` only needs the set-text task.
 
 ## Destination Requirements
 
-The destination machine must be able to write to its own clipboard.
+The destination machine must support the local clipboard operations required by the flow you run.
+
+General destination requirements:
+
+- `crs <source>` needs local clipboard write support
+- `crs -r <source>` needs local clipboard read support, with text preferred over image
 
 Linux destination requirements:
 
-- For writing text: `wl-copy`, `xclip`, or `xsel`
-- For writing images: `wl-copy` or `xclip`
+- For reading text in reverse mode: `wl-paste`, `xclip`, or `xsel`
+- For reading images in reverse mode: `wl-paste` or `xclip`
+- For writing text in pull mode: `wl-copy`, `xclip`, or `xsel`
+- For writing images in pull mode: `wl-copy` or `xclip`
 
-Current local image clipboard support is implemented for Linux destinations.
+macOS destination requirements:
+
+- For writing text in pull mode: `pbcopy`
+- Reverse-mode local clipboard reads use `pbpaste`, `osascript`, and `sips`
+
+Windows destination requirements:
+
+- For writing text in pull mode: PowerShell clipboard access
+- Reverse-mode local clipboard reads use PowerShell clipboard access
+
+Current local image clipboard write support in pull mode is implemented for Linux destinations.
 
 ## Support Matrix
 
-- Linux destination: supported for text and image clipboard writes
+- Linux destination: supported for pull-mode text and image clipboard writes, and reverse-mode text/image capture
+- macOS destination: supported for pull-mode text writes, and reverse-mode text/image capture
+- Windows destination: supported for pull-mode text writes, and reverse-mode text/image capture
 - macOS source via `launch_mode: "direct"`: supported
 - Linux source via `launch_mode: "direct"`: supported
 - Windows source via `launch_mode: "task"`: supported
 - Windows source via `launch_mode: "direct"`: not a supported default because clipboard access was not reliable in SSH-launched sessions
-- Bidirectional sync or peer-to-peer sync: out of scope by design
+- Explicit reverse push via `crs -r <source>`: supported for text, with image fallback to a destination-local path string
+- Automatic bidirectional sync or peer-to-peer sync: out of scope by design
 
 ## Config
 
@@ -134,7 +166,9 @@ Or point `crs` at another file:
 
 ```bash
 CRS_CONFIG=/path/to/config.json crs <source>
+CRS_CONFIG=/path/to/config.json crs -r <source>
 crs --config /path/to/config.json <source>
+crs --config /path/to/config.json -r <source>
 ```
 
 Config shape:
@@ -156,6 +190,22 @@ Config shape:
       "remote_bin": "C:\\Program Files\\clip-remote-sync\\crs.exe",
       "task_bridge_dir": "C:\\ProgramData\\clip-remote-sync",
       "capture_task_name": "crs_capture",
+      "set_text_task_name": "crs_set_clipboard_text"
+    }
+  }
+}
+```
+
+Minimal reverse-only Windows task-mode source:
+
+```json
+{
+  "sources": {
+    "windows_reverse_only_for_crs_r": {
+      "ssh_target": "user@windows-source.example",
+      "launch_mode": "task",
+      "remote_bin": "C:\\Program Files\\clip-remote-sync\\crs.exe",
+      "task_bridge_dir": "C:\\ProgramData\\clip-remote-sync",
       "set_text_task_name": "crs_set_clipboard_text"
     }
   }
