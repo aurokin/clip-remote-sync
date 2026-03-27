@@ -29,6 +29,8 @@ Bare `crs` shows an interactive menu that asks for a host first, then shows the 
 
 Only bare `crs` is interactive. Explicit forms like `crs <source>`, `crs -r <source>`, and `crs --config /path/to/config.json <source>` remain non-interactive.
 
+In the interactive menu, press the key shown in brackets to choose an option immediately; Enter is not required.
+
 `<source>` is any configured source alias from your `config.json` `sources` map.
 
 ## Behavior Contract
@@ -265,7 +267,7 @@ Available manual workflows:
 - `CI`: runs tests, race tests, vet, lint, and platform builds
 - `Release`: builds `crs`, `crs-windows-amd64.exe`, and `SHA256SUMS`, then publishes a GitHub release
 
-`setup-go` caching is intentionally disabled in this repository because there is currently no `go.sum`. If this project gains external Go module dependencies and a real `go.sum` is committed, re-enable caching in the workflows and point `cache-dependency-path` at the correct dependency file instead of leaving `cache: false`.
+`setup-go` caching is enabled and keyed off `go.sum`.
 
 ## Releases
 

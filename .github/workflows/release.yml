@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: false
+          cache-dependency-path: go.sum
       - name: Verify release tree
         run: make verify-release-tree
       - name: Build release artifacts

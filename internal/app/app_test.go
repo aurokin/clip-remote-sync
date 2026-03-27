@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -461,6 +462,37 @@ func TestRunWithoutArgsOnlyShowsValidActionsForSelectedHost(t *testing.T) {
 	}
 }
 
+func TestRunWithoutArgsQCancelsInteractiveSelection(t *testing.T) {
+	configPath := writeTestConfig(t)
+	app := testApplication()
+	app.in = strings.NewReader("q")
+
+	app.deps.defaultConfigPath = func() (string, error) {
+		return configPath, nil
+	}
+	app.deps.remoteCapture = func(source remote.SourceOptions) (remote.CapturedData, error) {
+		t.Fatal("unexpected remote capture")
+		return remote.CapturedData{}, nil
+	}
+	app.deps.remoteSetClipboardText = func(source remote.SourceOptions, text string) error {
+		t.Fatal("unexpected remote clipboard write")
+		return nil
+	}
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	exitCode := app.run(nil, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("expected cancel exit code 0, got %d", exitCode)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Cancelled.") {
+		t.Fatalf("expected cancel message, stdout=%q", stdout.String())
+	}
+}
+
 func TestRunWithoutArgsCtrlCInterruptsInteractiveSelection(t *testing.T) {
 	configPath := writeTestConfig(t)
 	app := testApplication()
@@ -481,6 +513,29 @@ func TestRunWithoutArgsCtrlCInterruptsInteractiveSelection(t *testing.T) {
 	}
 }
 
+func TestRunWithoutArgsCtrlCInterruptsActionSelection(t *testing.T) {
+	configPath := writeTestConfig(t)
+	app := testApplication()
+	app.in = strings.NewReader("1" + string([]byte{3}))
+
+	app.deps.defaultConfigPath = func() (string, error) {
+		return configPath, nil
+	}
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	exitCode := app.run(nil, &stdout, &stderr)
+	if exitCode != 130 {
+		t.Fatalf("expected interrupt exit code 130, got %d", exitCode)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), fmt.Sprintf("Select action for %s:", testTaskSourceName)) {
+		t.Fatalf("expected action prompt before interrupt, stdout=%q", stdout.String())
+	}
+}
+
 func TestInteractiveOutputTranslatesNewlinesInRawMode(t *testing.T) {
 	var output strings.Builder
 
@@ -494,6 +549,52 @@ func TestInteractiveOutputTranslatesNewlinesInRawMode(t *testing.T) {
 	}
 }
 
+func TestPromptInteractiveSelectionAcceptsLetterKeysAfterNineOptions(t *testing.T) {
+	labels := []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	index, exitCode, ok := promptInteractiveSelection(
+		interactiveInput{reader: bufio.NewReader(strings.NewReader("a"))},
+		&stdout,
+		&stderr,
+		"Select option:",
+		labels,
+	)
+	if !ok {
+		t.Fatalf("expected success, got exit code %d stderr=%q", exitCode, stderr.String())
+	}
+	if index != 9 {
+		t.Fatalf("expected index 9 for key a, got %d", index)
+	}
+}
+
+func TestPromptInteractiveSelectionRejectsTooManyOptions(t *testing.T) {
+	labels := make([]string, len(interactiveSelectionKeys)+1)
+	for i := range labels {
+		labels[i] = fmt.Sprintf("option-%d", i)
+	}
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	_, exitCode, ok := promptInteractiveSelection(
+		interactiveInput{reader: bufio.NewReader(strings.NewReader(""))},
+		&stdout,
+		&stderr,
+		"Select option:",
+		labels,
+	)
+	if ok {
+		t.Fatal("expected selection to fail")
+	}
+	if exitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "supports at most 35 options") {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+}
+
 func TestHelpIncludesReverseMode(t *testing.T) {
 	app := testApplication()
 
@@ -503,7 +604,7 @@ func TestHelpIncludesReverseMode(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("expected help success, got %d", exitCode)
 	}
-	if !strings.Contains(stdout.String(), "[-r]") || !strings.Contains(stdout.String(), "With -r, local text is pushed") {
+	if !strings.Contains(stdout.String(), "host-first interactive menu") || !strings.Contains(stdout.String(), "key shown in brackets") || !strings.Contains(stdout.String(), "With -r, local text is pushed") {
 		t.Fatalf("unexpected help output: %q", stdout.String())
 	}
 }

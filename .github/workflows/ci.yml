@@ -11,7 +11,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: false
+          cache-dependency-path: go.sum
       - name: Verify release tree
         run: make verify-release-tree
       - name: Run tests
@@ -32,7 +32,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: false
+          cache-dependency-path: go.sum
       - name: Verify release tree
         run: make verify-release-tree
       - name: Run tests
@@ -53,7 +53,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: false
+          cache-dependency-path: go.sum
       - name: Verify release tree
         shell: bash
         run: make verify-release-tree
@@ -71,7 +71,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: false
+          cache-dependency-path: go.sum
       - name: Verify release tree
         run: make verify-release-tree
       - uses: golangci/golangci-lint-action@v9
