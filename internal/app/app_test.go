@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -370,16 +371,16 @@ func TestRunWithoutArgsPromptsForHostThenAction(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Select source host:") {
 		t.Fatalf("missing host prompt: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "1. "+testDirectSourceName) {
+	if !strings.Contains(stdout.String(), "[1] "+testDirectSourceName) {
 		t.Fatalf("missing direct host option: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "2. "+testTaskSourceName) {
+	if !strings.Contains(stdout.String(), "[2] "+testTaskSourceName) {
 		t.Fatalf("missing task host option: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), fmt.Sprintf("Select action for %s:", testDirectSourceName)) {
 		t.Fatalf("missing direct source action prompt: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), fmt.Sprintf("1. Pull from %s (crs %s)", testDirectSourceName, testDirectSourceName)) {
+	if !strings.Contains(stdout.String(), fmt.Sprintf("[1] Pull from %s (crs %s)", testDirectSourceName, testDirectSourceName)) {
 		t.Fatalf("missing direct source pull option: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), fmt.Sprintf("Clipboard synced from %s to %s", testDirectSourceName, testDestinationName)) {
@@ -414,7 +415,7 @@ func TestRunWithoutArgsRetriesAfterInvalidHostSelection(t *testing.T) {
 	if remoteText != testLocalClipboardText {
 		t.Fatalf("expected remote clipboard text to be set, got %q", remoteText)
 	}
-	if !strings.Contains(stderr.String(), `Invalid selection "9". Choose 1-1 or q to quit.`) {
+	if !strings.Contains(stderr.String(), `Key "9" not found. Try again.`) {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
 	}
 	if strings.Count(stdout.String(), "> ") != 3 {
@@ -446,14 +447,50 @@ func TestRunWithoutArgsOnlyShowsValidActionsForSelectedHost(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Select source host:") {
 		t.Fatalf("missing host prompt: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "Press the key shown in brackets, or q to quit.") {
+		t.Fatalf("missing key hint: %q", stdout.String())
+	}
 	if !strings.Contains(stdout.String(), fmt.Sprintf("Select action for %s:", testTaskSourceName)) {
 		t.Fatalf("missing action prompt: %q", stdout.String())
 	}
-	if strings.Contains(stdout.String(), fmt.Sprintf("Pull from %s (crs %s)", testTaskSourceName, testTaskSourceName)) {
+	if strings.Contains(stdout.String(), fmt.Sprintf("[1] Pull from %s (crs %s)", testTaskSourceName, testTaskSourceName)) {
 		t.Fatalf("did not expect invalid forward action in menu: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), fmt.Sprintf("Push to %s (crs -r %s)", testTaskSourceName, testTaskSourceName)) {
+	if !strings.Contains(stdout.String(), fmt.Sprintf("[1] Push to %s (crs -r %s)", testTaskSourceName, testTaskSourceName)) {
 		t.Fatalf("expected reverse action in menu: %q", stdout.String())
+	}
+}
+
+func TestRunWithoutArgsCtrlCInterruptsInteractiveSelection(t *testing.T) {
+	configPath := writeTestConfig(t)
+	app := testApplication()
+	app.in = strings.NewReader(string([]byte{3}))
+
+	app.deps.defaultConfigPath = func() (string, error) {
+		return configPath, nil
+	}
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	exitCode := app.run(nil, &stdout, &stderr)
+	if exitCode != 130 {
+		t.Fatalf("expected interrupt exit code 130, got %d", exitCode)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+}
+
+func TestInteractiveOutputTranslatesNewlinesInRawMode(t *testing.T) {
+	var output strings.Builder
+
+	writer := interactiveOutput(&output, true)
+	if _, err := io.WriteString(writer, "line one\nline two\n"); err != nil {
+		t.Fatalf("write interactive output: %v", err)
+	}
+
+	if output.String() != "line one\r\nline two\r\n" {
+		t.Fatalf("unexpected translated output: %q", output.String())
 	}
 }
 
