@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,16 +57,30 @@ func defaultDependencies() dependencies {
 
 type application struct {
 	deps dependencies
+	in   io.Reader
 }
 
 type publicRequest struct {
-	configPath string
-	reverse    bool
-	sourceName string
+	configPath  string
+	interactive bool
+	reverse     bool
+	sourceName  string
+}
+
+type interactiveOption struct {
+	command     string
+	description string
+	reverse     bool
+	sourceName  string
+}
+
+type interactiveHost struct {
+	name    string
+	options []interactiveOption
 }
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
-	return application{deps: defaultDependencies()}.run(args, stdout, stderr)
+	return application{deps: defaultDependencies(), in: os.Stdin}.run(args, stdout, stderr)
 }
 
 func (a application) run(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -77,7 +93,21 @@ func (a application) run(args []string, stdout io.Writer, stderr io.Writer) int 
 		return exitCode
 	}
 
-	cfg, _, remoteSource, exitCode, ok := a.loadPublicContext(req, stderr)
+	cfg, exitCode, ok := a.loadConfig(req.configPath, stderr)
+	if !ok {
+		return exitCode
+	}
+
+	if req.interactive {
+		selectedReq, selectedExitCode, selected := a.selectInteractiveRequest(cfg, stdout, stderr)
+		if !selected {
+			return selectedExitCode
+		}
+		req.sourceName = selectedReq.sourceName
+		req.reverse = selectedReq.reverse
+	}
+
+	_, remoteSource, exitCode, ok := a.resolvePublicSource(cfg, req, stderr)
 	if !ok {
 		return exitCode
 	}
@@ -118,6 +148,22 @@ func (a application) parsePublicArgs(args []string, stdout io.Writer, stderr io.
 		return publicRequest{}, 0, true
 	}
 
+	if fs.NArg() == 0 {
+		if len(args) == 0 {
+			configPath := *configPathFlag
+			if configPath == "" {
+				var err error
+				configPath, err = a.deps.defaultConfigPath()
+				if err != nil {
+					fmt.Fprintf(stderr, "Failed to resolve config path: %v\n", err)
+					return publicRequest{}, 1, true
+				}
+			}
+			return publicRequest{configPath: configPath, interactive: true}, 0, false
+		}
+		printUsage(stderr)
+		return publicRequest{}, 2, true
+	}
 	if fs.NArg() != 1 {
 		printUsage(stderr)
 		return publicRequest{}, 2, true
@@ -136,25 +182,145 @@ func (a application) parsePublicArgs(args []string, stdout io.Writer, stderr io.
 	return publicRequest{configPath: configPath, reverse: *reverse, sourceName: fs.Arg(0)}, 0, false
 }
 
-func (a application) loadPublicContext(req publicRequest, stderr io.Writer) (Config, SourceConfig, remote.SourceOptions, int, bool) {
-	cfg, err := a.deps.loadConfig(req.configPath)
+func (a application) loadConfig(configPath string, stderr io.Writer) (Config, int, bool) {
+	cfg, err := a.deps.loadConfig(configPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "Failed to load config: %v\n", err)
-		fmt.Fprintf(stderr, "Create %s from config.example.json and add your source hosts there.\n", req.configPath)
-		return Config{}, SourceConfig{}, remote.SourceOptions{}, 1, false
+		fmt.Fprintf(stderr, "Create %s from config.example.json and add your source hosts there.\n", configPath)
+		return Config{}, 1, false
 	}
 
+	return cfg, 0, true
+}
+
+func (a application) resolvePublicSource(cfg Config, req publicRequest, stderr io.Writer) (SourceConfig, remote.SourceOptions, int, bool) {
 	sourceCfg, ok := cfg.Sources[req.sourceName]
 	if !ok {
 		fmt.Fprintf(stderr, "Unknown source %q. Configured sources: %s\n", req.sourceName, strings.Join(configuredSources(cfg), ", "))
-		return Config{}, SourceConfig{}, remote.SourceOptions{}, 1, false
+		return SourceConfig{}, remote.SourceOptions{}, 1, false
 	}
 	if err := validateSourceUsage(sourceCfg, req.reverse); err != nil {
 		fmt.Fprintf(stderr, "Invalid source %q config: %v\n", req.sourceName, err)
-		return Config{}, SourceConfig{}, remote.SourceOptions{}, 1, false
+		return SourceConfig{}, remote.SourceOptions{}, 1, false
 	}
 
-	return cfg, sourceCfg, buildRemoteSource(sourceCfg), 0, true
+	return sourceCfg, buildRemoteSource(sourceCfg), 0, true
+}
+
+func (a application) selectInteractiveRequest(cfg Config, stdout io.Writer, stderr io.Writer) (publicRequest, int, bool) {
+	hosts := interactiveHosts(cfg)
+	if len(hosts) == 0 {
+		fmt.Fprintln(stderr, "No runnable sources found in config.")
+		return publicRequest{}, 1, false
+	}
+
+	reader := bufio.NewReader(a.input())
+	hostLabels := make([]string, 0, len(hosts))
+	for _, host := range hosts {
+		hostLabels = append(hostLabels, host.name)
+	}
+	hostIndex, exitCode, ok := promptInteractiveSelection(reader, stdout, stderr, "Select source host:", hostLabels)
+	if !ok {
+		return publicRequest{}, exitCode, false
+	}
+
+	host := hosts[hostIndex]
+	actionLabels := make([]string, 0, len(host.options))
+	for _, option := range host.options {
+		actionLabels = append(actionLabels, fmt.Sprintf("%s (%s)", option.description, option.command))
+	}
+	actionIndex, exitCode, ok := promptInteractiveSelection(
+		reader,
+		stdout,
+		stderr,
+		fmt.Sprintf("Select action for %s:", host.name),
+		actionLabels,
+	)
+	if !ok {
+		return publicRequest{}, exitCode, false
+	}
+
+	option := host.options[actionIndex]
+	return publicRequest{reverse: option.reverse, sourceName: option.sourceName}, 0, true
+}
+
+func interactiveHosts(cfg Config) []interactiveHost {
+	var hosts []interactiveHost
+	for _, name := range configuredSources(cfg) {
+		options := interactiveOptions(cfg, name)
+		if len(options) > 0 {
+			hosts = append(hosts, interactiveHost{name: name, options: options})
+		}
+	}
+	return hosts
+}
+
+func promptInteractiveSelection(reader *bufio.Reader, stdout io.Writer, stderr io.Writer, title string, labels []string) (int, int, bool) {
+	fmt.Fprintln(stdout, title)
+	for idx, label := range labels {
+		fmt.Fprintf(stdout, "  %d. %s\n", idx+1, label)
+	}
+
+	for {
+		fmt.Fprint(stdout, "> ")
+
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			fmt.Fprintf(stderr, "Failed to read selection: %v\n", err)
+			return 0, 1, false
+		}
+
+		choice := strings.TrimSpace(line)
+		if choice == "" {
+			if errors.Is(err, io.EOF) {
+				fmt.Fprintln(stderr, "No selection provided.")
+				return 0, 1, false
+			}
+			continue
+		}
+		if choice == "q" || choice == "quit" {
+			fmt.Fprintln(stdout, "Cancelled.")
+			return 0, 0, false
+		}
+
+		index, convErr := strconv.Atoi(choice)
+		if convErr == nil && index >= 1 && index <= len(labels) {
+			return index - 1, 0, true
+		}
+
+		fmt.Fprintf(stderr, "Invalid selection %q. Choose 1-%d or q to quit.\n", choice, len(labels))
+		if errors.Is(err, io.EOF) {
+			return 0, 1, false
+		}
+	}
+}
+
+func interactiveOptions(cfg Config, name string) []interactiveOption {
+	sourceCfg := cfg.Sources[name]
+	var options []interactiveOption
+	if validateSourceUsage(sourceCfg, false) == nil {
+		options = append(options, interactiveOption{
+			command:     "crs " + name,
+			description: "Pull from " + name,
+			sourceName:  name,
+		})
+	}
+	if validateSourceUsage(sourceCfg, true) == nil {
+		options = append(options, interactiveOption{
+			command:     "crs -r " + name,
+			description: "Push to " + name,
+			reverse:     true,
+			sourceName:  name,
+		})
+	}
+	return options
+}
+
+func (a application) input() io.Reader {
+	if a.in != nil {
+		return a.in
+	}
+	return os.Stdin
 }
 
 func buildRemoteSource(sourceCfg SourceConfig) remote.SourceOptions {
@@ -265,9 +431,12 @@ func destinationName(cfg Config) string {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: crs [--config PATH] [-r] <source>")
+	fmt.Fprintln(w, "Usage: crs")
+	fmt.Fprintln(w, "       crs [--config PATH] [-r] <source>")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Sync clipboard content between the local machine and a configured source.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "With no arguments, crs shows an interactive menu of configured source actions.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Default mode pulls from the source clipboard into the local clipboard.")
 	fmt.Fprintln(w, "With -r, local text is pushed to the source clipboard; if the local clipboard only has an image,")

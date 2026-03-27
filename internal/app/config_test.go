@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,16 +13,16 @@ func TestLoadConfigAllowsTaskModeWithoutEagerTaskValidation(t *testing.T) {
 
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
-	configJSON := `{
-  "destination": { "name": "bront" },
+	configJSON := fmt.Sprintf(`{
+  "destination": { "name": %q },
   "sources": {
-    "haste": {
-      "ssh_target": "auro@haste.home.arpa",
+    %q: {
+      "ssh_target": %q,
       "launch_mode": "task",
       "remote_bin": "C:\\Program Files\\clip-remote-sync\\crs.exe"
     }
   }
-}`
+}`, testDestinationName, testTaskSourceName, testTaskSSHTarget)
 	if err := os.WriteFile(configPath, []byte(configJSON), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -30,8 +31,8 @@ func TestLoadConfigAllowsTaskModeWithoutEagerTaskValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if cfg.Sources["haste"].LaunchMode != "task" {
-		t.Fatalf("expected task launch mode, got %q", cfg.Sources["haste"].LaunchMode)
+	if cfg.Sources[testTaskSourceName].LaunchMode != "task" {
+		t.Fatalf("expected task launch mode, got %q", cfg.Sources[testTaskSourceName].LaunchMode)
 	}
 }
 
@@ -40,16 +41,16 @@ func TestLoadConfigAllowsDirectMode(t *testing.T) {
 
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
-	configJSON := `{
-  "destination": { "name": "bront" },
+	configJSON := fmt.Sprintf(`{
+  "destination": { "name": %q },
   "sources": {
-    "luma": {
-      "ssh_target": "auro@luma.home.arpa",
+    %q: {
+      "ssh_target": %q,
       "launch_mode": "direct",
       "remote_bin": "crs"
     }
   }
-}`
+}`, testDestinationName, testDirectSourceName, testDirectSSHTarget)
 	if err := os.WriteFile(configPath, []byte(configJSON), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -58,8 +59,8 @@ func TestLoadConfigAllowsDirectMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if cfg.Sources["luma"].LaunchMode != "direct" {
-		t.Fatalf("expected direct launch mode, got %q", cfg.Sources["luma"].LaunchMode)
+	if cfg.Sources[testDirectSourceName].LaunchMode != "direct" {
+		t.Fatalf("expected direct launch mode, got %q", cfg.Sources[testDirectSourceName].LaunchMode)
 	}
 }
 

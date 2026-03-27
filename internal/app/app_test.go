@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +12,15 @@ import (
 
 	"github.com/aurokin/clip-remote-sync/internal/protocol"
 	"github.com/aurokin/clip-remote-sync/internal/remote"
+)
+
+const (
+	testDestinationName    = "test-destination"
+	testTaskSourceName     = "task-source"
+	testDirectSourceName   = "direct-source"
+	testTaskSSHTarget      = "task-source.example.test"
+	testDirectSSHTarget    = "direct-source.example.test"
+	testLocalClipboardText = "hello from test destination"
 )
 
 func TestRunImageFlowUpdatesLocalImageBeforeRemoteText(t *testing.T) {
@@ -39,7 +49,7 @@ func TestRunImageFlowUpdatesLocalImageBeforeRemoteText(t *testing.T) {
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 0 {
 		t.Fatalf("expected success, got exit code %d, stderr=%q", exitCode, stderr.String())
 	}
@@ -48,7 +58,7 @@ func TestRunImageFlowUpdatesLocalImageBeforeRemoteText(t *testing.T) {
 	if !reflect.DeepEqual(order, wantOrder) {
 		t.Fatalf("unexpected operation order: got %v want %v", order, wantOrder)
 	}
-	if !strings.Contains(stdout.String(), "Image captured from haste and saved to /tmp/clip/test-image.png") {
+	if !strings.Contains(stdout.String(), fmt.Sprintf("Image captured from %s and saved to /tmp/clip/test-image.png", testTaskSourceName)) {
 		t.Fatalf("unexpected stdout: %q", stdout.String())
 	}
 }
@@ -83,7 +93,7 @@ func TestRunImageFlowKeepsLocalImageClipboardWhenRemoteUpdateFails(t *testing.T)
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 1 {
 		t.Fatalf("expected failure, got exit code %d", exitCode)
 	}
@@ -115,14 +125,14 @@ func TestRunTextFlowSetsLocalClipboard(t *testing.T) {
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 0 {
 		t.Fatalf("expected success, got exit code %d, stderr=%q", exitCode, stderr.String())
 	}
 	if localText != "hello" {
 		t.Fatalf("expected local clipboard text to be set, got %q", localText)
 	}
-	if !strings.Contains(stdout.String(), "Clipboard synced from haste to bront") {
+	if !strings.Contains(stdout.String(), fmt.Sprintf("Clipboard synced from %s to %s", testTaskSourceName, testDestinationName)) {
 		t.Fatalf("unexpected stdout: %q", stdout.String())
 	}
 }
@@ -132,7 +142,7 @@ func TestRunReverseTextFlowSetsRemoteClipboard(t *testing.T) {
 	app := testApplication()
 
 	app.deps.localCapturePreferText = func() (protocol.CaptureEnvelope, error) {
-		return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: "hello from bront"}, nil
+		return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: testLocalClipboardText}, nil
 	}
 
 	remoteText := ""
@@ -147,14 +157,14 @@ func TestRunReverseTextFlowSetsRemoteClipboard(t *testing.T) {
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "-r", "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, "-r", testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 0 {
 		t.Fatalf("expected success, got exit code %d, stderr=%q", exitCode, stderr.String())
 	}
-	if remoteText != "hello from bront" {
+	if remoteText != testLocalClipboardText {
 		t.Fatalf("expected remote clipboard text to be set, got %q", remoteText)
 	}
-	if !strings.Contains(stdout.String(), "Clipboard synced from bront to haste") {
+	if !strings.Contains(stdout.String(), fmt.Sprintf("Clipboard synced from %s to %s", testDestinationName, testTaskSourceName)) {
 		t.Fatalf("unexpected stdout: %q", stdout.String())
 	}
 }
@@ -164,7 +174,7 @@ func TestRunReverseTextFlowReportsRemoteWriteFailure(t *testing.T) {
 	app := testApplication()
 
 	app.deps.localCapturePreferText = func() (protocol.CaptureEnvelope, error) {
-		return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: "hello from bront"}, nil
+		return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: testLocalClipboardText}, nil
 	}
 	app.deps.remoteSetClipboardText = func(source remote.SourceOptions, text string) error {
 		return errors.New("ssh failed")
@@ -172,11 +182,11 @@ func TestRunReverseTextFlowReportsRemoteWriteFailure(t *testing.T) {
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "-r", "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, "-r", testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 1 {
 		t.Fatalf("expected failure, got exit code %d", exitCode)
 	}
-	if !strings.Contains(stderr.String(), "Failed to set haste clipboard") {
+	if !strings.Contains(stderr.String(), fmt.Sprintf("Failed to set %s clipboard", testTaskSourceName)) {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
 	}
 }
@@ -206,14 +216,14 @@ func TestRunReverseImageFlowSavesImageAndSetsRemotePath(t *testing.T) {
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "--reverse", "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, "--reverse", testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 0 {
 		t.Fatalf("expected success, got exit code %d, stderr=%q", exitCode, stderr.String())
 	}
 	if remoteText != "/tmp/clip/reverse-image.png" {
 		t.Fatalf("expected remote clipboard path to be set, got %q", remoteText)
 	}
-	if !strings.Contains(stdout.String(), "Local image saved to /tmp/clip/reverse-image.png and synced to haste as text") {
+	if !strings.Contains(stdout.String(), fmt.Sprintf("Local image saved to /tmp/clip/reverse-image.png and synced to %s as text", testTaskSourceName)) {
 		t.Fatalf("unexpected stdout: %q", stdout.String())
 	}
 }
@@ -237,7 +247,7 @@ func TestRunReverseImageFlowKeepsSavedImageWhenRemoteUpdateFails(t *testing.T) {
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "-r", "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, "-r", testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 1 {
 		t.Fatalf("expected failure, got exit code %d", exitCode)
 	}
@@ -256,7 +266,7 @@ func TestRunReverseImageFlowRejectsMalformedImagePayload(t *testing.T) {
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "-r", "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, "-r", testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 1 {
 		t.Fatalf("expected failure, got exit code %d", exitCode)
 	}
@@ -281,7 +291,7 @@ func TestRunReverseImageFlowReportsSaveFailure(t *testing.T) {
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "-r", "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, "-r", testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 1 {
 		t.Fatalf("expected failure, got exit code %d", exitCode)
 	}
@@ -300,7 +310,7 @@ func TestRunReverseReportsLocalCaptureFailure(t *testing.T) {
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "-r", "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, "-r", testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 1 {
 		t.Fatalf("expected failure, got exit code %d", exitCode)
 	}
@@ -319,12 +329,131 @@ func TestRunReverseRejectsUnsupportedCaptureKind(t *testing.T) {
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "-r", "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, "-r", testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 1 {
 		t.Fatalf("expected failure, got exit code %d", exitCode)
 	}
 	if !strings.Contains(stderr.String(), `Unsupported local capture kind "weird"`) {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+}
+
+func TestRunWithoutArgsPromptsForHostThenAction(t *testing.T) {
+	configPath := writeMultiSourceConfig(t)
+	app := testApplication()
+	app.in = strings.NewReader("1\n1\n")
+
+	var capturedTarget string
+	app.deps.defaultConfigPath = func() (string, error) {
+		return configPath, nil
+	}
+	app.deps.remoteCapture = func(source remote.SourceOptions) (remote.CapturedData, error) {
+		capturedTarget = source.SSHTarget
+		return remote.CapturedData{Kind: protocol.KindText, Text: "hello"}, nil
+	}
+	app.deps.setLocalClipboard = func(text string) error {
+		if text != "hello" {
+			t.Fatalf("unexpected local clipboard text: %q", text)
+		}
+		return nil
+	}
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	exitCode := app.run(nil, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("expected success, got exit code %d, stderr=%q", exitCode, stderr.String())
+	}
+	if capturedTarget != testDirectSSHTarget {
+		t.Fatalf("expected direct target %q, got %q", testDirectSSHTarget, capturedTarget)
+	}
+	if !strings.Contains(stdout.String(), "Select source host:") {
+		t.Fatalf("missing host prompt: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "1. "+testDirectSourceName) {
+		t.Fatalf("missing direct host option: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "2. "+testTaskSourceName) {
+		t.Fatalf("missing task host option: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), fmt.Sprintf("Select action for %s:", testDirectSourceName)) {
+		t.Fatalf("missing direct source action prompt: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), fmt.Sprintf("1. Pull from %s (crs %s)", testDirectSourceName, testDirectSourceName)) {
+		t.Fatalf("missing direct source pull option: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), fmt.Sprintf("Clipboard synced from %s to %s", testDirectSourceName, testDestinationName)) {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+}
+
+func TestRunWithoutArgsRetriesAfterInvalidHostSelection(t *testing.T) {
+	configPath := writeTestConfig(t)
+	app := testApplication()
+	app.in = strings.NewReader("9\n1\n2\n")
+
+	app.deps.defaultConfigPath = func() (string, error) {
+		return configPath, nil
+	}
+	app.deps.localCapturePreferText = func() (protocol.CaptureEnvelope, error) {
+		return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: testLocalClipboardText}, nil
+	}
+
+	var remoteText string
+	app.deps.remoteSetClipboardText = func(source remote.SourceOptions, text string) error {
+		remoteText = text
+		return nil
+	}
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	exitCode := app.run(nil, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("expected success, got exit code %d, stderr=%q", exitCode, stderr.String())
+	}
+	if remoteText != testLocalClipboardText {
+		t.Fatalf("expected remote clipboard text to be set, got %q", remoteText)
+	}
+	if !strings.Contains(stderr.String(), `Invalid selection "9". Choose 1-1 or q to quit.`) {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	if strings.Count(stdout.String(), "> ") != 3 {
+		t.Fatalf("expected reprompt, stdout=%q", stdout.String())
+	}
+}
+
+func TestRunWithoutArgsOnlyShowsValidActionsForSelectedHost(t *testing.T) {
+	configPath := writeReverseOnlyTaskConfig(t)
+	app := testApplication()
+	app.in = strings.NewReader("1\n1\n")
+
+	app.deps.defaultConfigPath = func() (string, error) {
+		return configPath, nil
+	}
+	app.deps.localCapturePreferText = func() (protocol.CaptureEnvelope, error) {
+		return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: testLocalClipboardText}, nil
+	}
+	app.deps.remoteSetClipboardText = func(source remote.SourceOptions, text string) error {
+		return nil
+	}
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	exitCode := app.run(nil, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("expected success, got exit code %d, stderr=%q", exitCode, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Select source host:") {
+		t.Fatalf("missing host prompt: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), fmt.Sprintf("Select action for %s:", testTaskSourceName)) {
+		t.Fatalf("missing action prompt: %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), fmt.Sprintf("Pull from %s (crs %s)", testTaskSourceName, testTaskSourceName)) {
+		t.Fatalf("did not expect invalid forward action in menu: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), fmt.Sprintf("Push to %s (crs -r %s)", testTaskSourceName, testTaskSourceName)) {
+		t.Fatalf("expected reverse action in menu: %q", stdout.String())
 	}
 }
 
@@ -347,7 +476,7 @@ func TestReverseLongFlagIsAccepted(t *testing.T) {
 	app := testApplication()
 
 	app.deps.localCapturePreferText = func() (protocol.CaptureEnvelope, error) {
-		return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: "hello from bront"}, nil
+		return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: testLocalClipboardText}, nil
 	}
 	app.deps.remoteSetClipboardText = func(source remote.SourceOptions, text string) error {
 		return nil
@@ -355,9 +484,28 @@ func TestReverseLongFlagIsAccepted(t *testing.T) {
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "--reverse", "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, "--reverse", testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 0 {
 		t.Fatalf("expected success, got exit code %d, stderr=%q", exitCode, stderr.String())
+	}
+}
+
+func TestRunWithConfigButNoSourceRemainsNonInteractive(t *testing.T) {
+	configPath := writeTestConfig(t)
+	app := testApplication()
+	app.in = strings.NewReader("1\n")
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	exitCode := app.run([]string{"--config", configPath}, &stdout, &stderr)
+	if exitCode != 2 {
+		t.Fatalf("expected usage error, got exit code %d", exitCode)
+	}
+	if strings.Contains(stdout.String(), "Select clipboard sync action:") {
+		t.Fatalf("expected no interactive menu, stdout=%q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "Usage: crs") {
+		t.Fatalf("expected usage output, stderr=%q", stderr.String())
 	}
 }
 
@@ -366,7 +514,7 @@ func TestRunReverseTaskModeAllowsMissingCaptureTaskName(t *testing.T) {
 	app := testApplication()
 
 	app.deps.localCapturePreferText = func() (protocol.CaptureEnvelope, error) {
-		return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: "hello from bront"}, nil
+		return protocol.CaptureEnvelope{Kind: protocol.KindText, Text: testLocalClipboardText}, nil
 	}
 	app.deps.remoteSetClipboardText = func(source remote.SourceOptions, text string) error {
 		return nil
@@ -374,7 +522,7 @@ func TestRunReverseTaskModeAllowsMissingCaptureTaskName(t *testing.T) {
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "-r", "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, "-r", testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 0 {
 		t.Fatalf("expected success, got exit code %d, stderr=%q", exitCode, stderr.String())
 	}
@@ -386,7 +534,7 @@ func TestForwardTaskModeStillRequiresCaptureTaskName(t *testing.T) {
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode := app.run([]string{"--config", configPath, "haste"}, &stdout, &stderr)
+	exitCode := app.run([]string{"--config", configPath, testTaskSourceName}, &stdout, &stderr)
 	if exitCode != 1 {
 		t.Fatalf("expected failure, got exit code %d", exitCode)
 	}
@@ -442,18 +590,18 @@ func writeTestConfig(t *testing.T) string {
 	t.Helper()
 
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	configJSON := `{
-  "destination": { "name": "bront" },
+	configJSON := fmt.Sprintf(`{
+  "destination": { "name": %q },
   "sources": {
-    "haste": {
-      "ssh_target": "auro@haste.home.arpa",
+    %q: {
+      "ssh_target": %q,
       "launch_mode": "task",
       "remote_bin": "crs.exe",
       "capture_task_name": "crs_capture",
       "set_text_task_name": "crs_set_clipboard_text"
     }
   }
-}`
+}`, testDestinationName, testTaskSourceName, testTaskSSHTarget)
 	if err := os.WriteFile(configPath, []byte(configJSON), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -464,17 +612,44 @@ func writeReverseOnlyTaskConfig(t *testing.T) string {
 	t.Helper()
 
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	configJSON := `{
-  "destination": { "name": "bront" },
+	configJSON := fmt.Sprintf(`{
+  "destination": { "name": %q },
   "sources": {
-    "haste": {
-      "ssh_target": "auro@haste.home.arpa",
+    %q: {
+      "ssh_target": %q,
       "launch_mode": "task",
       "remote_bin": "crs.exe",
       "set_text_task_name": "crs_set_clipboard_text"
     }
   }
-}`
+}`, testDestinationName, testTaskSourceName, testTaskSSHTarget)
+	if err := os.WriteFile(configPath, []byte(configJSON), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath
+}
+
+func writeMultiSourceConfig(t *testing.T) string {
+	t.Helper()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configJSON := fmt.Sprintf(`{
+  "destination": { "name": %q },
+  "sources": {
+    %q: {
+      "ssh_target": %q,
+      "launch_mode": "task",
+      "remote_bin": "crs.exe",
+      "capture_task_name": "crs_capture",
+      "set_text_task_name": "crs_set_clipboard_text"
+    },
+    %q: {
+      "ssh_target": %q,
+      "launch_mode": "direct",
+      "remote_bin": "crs"
+    }
+  }
+}`, testDestinationName, testTaskSourceName, testTaskSSHTarget, testDirectSourceName, testDirectSSHTarget)
 	if err := os.WriteFile(configPath, []byte(configJSON), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
