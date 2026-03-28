@@ -7,6 +7,7 @@ The scope is intentionally narrow: one command, one destination machine, and pre
 ## Usage
 
 ```bash
+crs
 crs <source>
 crs -r <source>
 ```
@@ -14,10 +15,23 @@ crs -r <source>
 Examples:
 
 ```bash
-crs luma
-crs haste
-crs -r haste
+crs
+crs mac-source
+crs windows-source
+crs -r windows-source
 ```
+
+Bare `crs` shows an interactive menu that asks for a host first, then shows the valid actions for that host, for example:
+
+- `crs mac-source`
+- `crs windows-source`
+- `crs -r windows-source`
+
+Only bare `crs` is interactive. Explicit forms like `crs <source>`, `crs -r <source>`, and `crs --config /path/to/config.json <source>` remain non-interactive.
+
+In the interactive menu, press the key shown in brackets to choose an option immediately; Enter is not required.
+
+`<source>` is any configured source alias from your `config.json` `sources` map.
 
 ## Behavior Contract
 
@@ -46,9 +60,9 @@ Reverse image fallback:
 1. If local text is absent and the local clipboard only contains an image, `crs -r <source>` writes the image locally to a destination-local saved path.
 2. The source clipboard is updated to that destination-local path as text.
 
-For example, on a Linux destination like `bront`, this matches the remote-workflow case where you want:
+For example, on a Linux destination like `linux-destination`, this matches the remote-workflow case where you want:
 
-- the actual image available on `bront`
+- the actual image available on `linux-destination`
 - a pasteable `/tmp/clip/...png` path back on the source machine
 
 ## Codex Note
@@ -62,7 +76,7 @@ In particular, if the source clipboard contains `/tmp/clip/...png` as text, Code
 These choices are deliberate and should not be changed casually:
 
 - `crs` is pull-first. `crs <source>` pulls from the source, and `crs -r <source>` is an explicit reverse push back to the source. Automatic bidirectional or peer-to-peer clipboard sync remains out of scope.
-- The public human interface is `crs <source>` and `crs -r <source>`. Internal subcommands such as `_capture` and `_set-clipboard-text` are implementation details for transport and task runners.
+- The public human interface is bare `crs` for interactive selection, plus the explicit commands `crs <source>` and `crs -r <source>`. Internal subcommands such as `_capture` and `_set-clipboard-text` are implementation details for transport and task runners.
 - Image sync intentionally writes a simple destination-local path like `/tmp/clip/...png` back to the source clipboard. That is less technically precise than a host-qualified locator, but it is the intended workflow for remote operation and agent tooling.
 - Windows `launch_mode: "task"` exists because direct SSH-launched clipboard access was not reliable in the interactive desktop session. Do not replace task mode with direct mode on Windows without re-proving that constraint on real machines.
 
@@ -165,6 +179,7 @@ cp config.example.json ~/.config/clip-remote-sync/config.json
 Or point `crs` at another file:
 
 ```bash
+CRS_CONFIG=/path/to/config.json crs
 CRS_CONFIG=/path/to/config.json crs <source>
 CRS_CONFIG=/path/to/config.json crs -r <source>
 crs --config /path/to/config.json <source>
@@ -252,7 +267,7 @@ Available manual workflows:
 - `CI`: runs tests, race tests, vet, lint, and platform builds
 - `Release`: builds `crs`, `crs-windows-amd64.exe`, and `SHA256SUMS`, then publishes a GitHub release
 
-`setup-go` caching is intentionally disabled in this repository because there is currently no `go.sum`. If this project gains external Go module dependencies and a real `go.sum` is committed, re-enable caching in the workflows and point `cache-dependency-path` at the correct dependency file instead of leaving `cache: false`.
+`setup-go` caching is enabled and keyed off `go.sum`.
 
 ## Releases
 
@@ -280,7 +295,7 @@ Install from source with Go:
 go install github.com/aurokin/clip-remote-sync/cmd/crs@latest
 ```
 
-Recommended for Unix hosts that already use `mise` and Go, such as `bront` and `luma`:
+Recommended for Unix hosts that already use `mise` and Go, such as `linux-destination` and `mac-source`:
 
 ```toml
 [tools]
@@ -329,7 +344,7 @@ For managed installs on Unix hosts, prefer the Go backend entry shown above over
 
 ## Windows Host Setup
 
-For a Windows source host such as `haste`:
+For a Windows source host such as `windows-source`:
 
 1. Download this repository or at least [`scripts/install-windows.ps1`](./scripts/install-windows.ps1).
 2. Run the installer script as the target desktop user:
