@@ -87,7 +87,7 @@ type interactiveInput struct {
 	restore func() error
 }
 
-const interactiveSelectionKeys = "123456789abcdefghijklmnopqrstuvwxyz"
+const interactiveSelectionKeys = "123456789abcdefghijklmnoprstuvwxyz"
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	return application{deps: defaultDependencies(), in: os.Stdin}.run(args, stdout, stderr)

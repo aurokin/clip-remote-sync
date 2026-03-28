@@ -569,6 +569,35 @@ func TestPromptInteractiveSelectionAcceptsLetterKeysAfterNineOptions(t *testing.
 	}
 }
 
+func TestPromptInteractiveSelectionReservesQForQuit(t *testing.T) {
+	labels := make([]string, 26)
+	for i := range labels {
+		labels[i] = fmt.Sprintf("option-%d", i)
+	}
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	index, exitCode, ok := promptInteractiveSelection(
+		interactiveInput{reader: bufio.NewReader(strings.NewReader("r"))},
+		&stdout,
+		&stderr,
+		"Select option:",
+		labels,
+	)
+	if !ok {
+		t.Fatalf("expected success, got exit code %d stderr=%q", exitCode, stderr.String())
+	}
+	if index != 25 {
+		t.Fatalf("expected index 25 for key r, got %d", index)
+	}
+	if strings.Contains(stdout.String(), "[q]") {
+		t.Fatalf("q should be reserved for quit, stdout=%q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "[r] option-25") {
+		t.Fatalf("expected option 25 to use key r, stdout=%q", stdout.String())
+	}
+}
+
 func TestPromptInteractiveSelectionRejectsTooManyOptions(t *testing.T) {
 	labels := make([]string, len(interactiveSelectionKeys)+1)
 	for i := range labels {
@@ -590,7 +619,7 @@ func TestPromptInteractiveSelectionRejectsTooManyOptions(t *testing.T) {
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
 	}
-	if !strings.Contains(stderr.String(), "supports at most 35 options") {
+	if !strings.Contains(stderr.String(), fmt.Sprintf("supports at most %d options", len(interactiveSelectionKeys))) {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
 	}
 }
